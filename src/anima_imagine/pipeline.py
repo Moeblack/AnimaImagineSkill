@@ -54,6 +54,9 @@ class AnimaPipeline:
         self.model_version = cfg.model_version
         self.device = cfg.device
         self.low_vram = cfg.low_vram
+        self.sage_attention = cfg.sage_attention
+        self.compile_models = cfg.compile_models
+        self.clear_cuda_cache = cfg.clear_cuda_cache
         self._cfg = cfg
         self.pipe = None
         # GPU 锁：任意多个 HTTP 请求可以并发进入，但 GPU 推理严格串行
@@ -122,6 +125,24 @@ class AnimaPipeline:
 
         elapsed = time.time() - t0
         print(f"[AnimaPipeline] 模型加载完成，耗时 {elapsed:.1f}s")
+
+        # 启用 SageAttention（仅作用于 DiT，通过 DiffSynth 内置的 attention 模块切换）
+        if self.sage_attention:
+            try:
+                from sageattention import sageattn  # noqa: F401
+                import diffsynth.core.attention as attn_module
+                attn_module.ATTENTION_IMPLEMENTATION = "sage_attention"
+                print("[AnimaPipeline] SageAttention 已启用（仅 DiT）")
+            except Exception as e:
+                print(f"[AnimaPipeline] SageAttention 不可用，跳过: {e}")
+                print("[AnimaPipeline]   安装方式: uv pip install sageattention 或 pip install sageattention")
+
+        # 启用 torch.compile（DiT 为 compilable_models）
+        if self.compile_models and hasattr(self.pipe, "compile_pipeline"):
+            print("[AnimaPipeline] 正在编译 DiT (torch.compile)...")
+            t_compile = time.time()
+            self.pipe.compile_pipeline(mode="default", dynamic=True)
+            print(f"[AnimaPipeline] torch.compile 完成，耗时 {time.time() - t_compile:.1f}s")
 
         # 低显存模式：DiffSynth 可能支持 CPU offload
         if self.low_vram and hasattr(self.pipe, "enable_cpu_offload"):
@@ -226,6 +247,13 @@ class AnimaPipeline:
         if seed < 0:
             seed = torch.randint(0, 2**32 - 1, (1,)).item()
 
+        # 分辨率对齐到 16 的倍数（Cosmos 架构要求，DiffSynth 内部也会做，但提前对齐并日志更清晰）
+        orig_width, orig_height = width, height
+        width = ((width + 15) // 16) * 16
+        height = ((height + 15) // 16) * 16
+        if width != orig_width or height != orig_height:
+            print(f"[Generate] 分辨率已对齐到 16 倍数: {width}×{height}")
+
         print(f"[Generate] {width}×{height}, steps={steps}, seed={seed}, cfg={cfg_scale}")
         print(f"  prompt: {prompt[:100]}{'...' if len(prompt) > 100 else ''}")
 
@@ -263,10 +291,11 @@ class AnimaPipeline:
         else:
             image = result  # 假定是 PIL.Image
 
-        # ⬇ 关键：每次生成后释放中间张量占用的显存。
-        # 不同分辨率的请求会分配不同大小的显存块，
-        # PyTorch 缓存分配器不会自动归还，累积几次就会 OOM。
-        torch.cuda.empty_cache()
+        # 显存清理：默认关闭以提升连续生成速度；仅在配置开启时执行
+        if self.clear_cuda_cache:
+            # 不同分辨率的请求会分配不同大小的显存块，
+            # PyTorch 缓存分配器不会自动归还，累积几次就会 OOM。
+            torch.cuda.empty_cache()
 
         print(f"[Generate] 完成，耗时 {elapsed:.1f}s")
         return image, seed, elapsed

@@ -33,6 +33,14 @@ class Config:
     device: str = "cuda"
     low_vram: bool = False
 
+    # --- 性能优化 ---
+    # 启用 SageAttention（仅作用于 DiT，text_encoder / VAE 不受影响）
+    sage_attention: bool = True
+    # 启用 torch.compile 加速 DiT（常驻服务建议开启，首次生成有预热）
+    compile_models: bool = True
+    # 每次生成后是否强制清空 CUDA 缓存（常驻服务建议关闭）
+    clear_cuda_cache: bool = False
+
     # --- Tokenizer ---
     qwen_tokenizer_path: str = ""
     t5xxl_tokenizer_path: str = ""
@@ -101,8 +109,15 @@ def load_config(yaml_path: str = "config.yaml") -> Config:
     # 从 YAML 嵌套结构中提取值
     srv = data.get("server", {})
     mdl = data.get("model", {})
+    opt = data.get("optimization", {})
     tok = data.get("tokenizer", {})
     out = data.get("output", {})
+
+    def _bool_env(name: str, default: bool) -> bool:
+        val = os.getenv(name)
+        if val is None:
+            return default
+        return val.lower() in ("true", "1", "yes", "on")
 
     cfg = Config(
         # 服务器: 环境变量 > YAML > 默认值
@@ -114,6 +129,11 @@ def load_config(yaml_path: str = "config.yaml") -> Config:
         model_version=os.getenv("ANIMA_MODEL_VERSION", mdl.get("model_version", "preview3")),
         device=os.getenv("ANIMA_DEVICE", mdl.get("device", "cuda")),
         low_vram=os.getenv("ANIMA_LOW_VRAM", str(mdl.get("low_vram", False))).lower() in ("true", "1"),
+
+        # 性能优化
+        sage_attention=_bool_env("ANIMA_SAGE_ATTENTION", opt.get("sage_attention", True)),
+        compile_models=_bool_env("ANIMA_COMPILE_MODELS", opt.get("compile_models", True)),
+        clear_cuda_cache=_bool_env("ANIMA_CLEAR_CUDA_CACHE", opt.get("clear_cuda_cache", False)),
 
         # Tokenizer
         qwen_tokenizer_path=os.getenv("ANIMA_QWEN_TOKENIZER", tok.get("qwen_path", "")),

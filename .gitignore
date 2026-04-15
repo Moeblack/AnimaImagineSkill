@@ -1,27 +1,61 @@
+# LimCode internal tracking
+.limcode/
+
 # 本地配置（包含机器相关路径，不应提交）
 config.yaml
 
-# 生成的图片
+# 生成的图片与日志
 output/
+*.log
+output.txt
 
 # 模型权重 + tokenizer + 缓存（体积大，不应提交）
 Anima/
 models/
 *.safetensors
 *.gguf
+*.ckpt
+*.bin
 _hf_cache/
 
 # Python
 __pycache__/
+*.py[cod]
+*$py.class
 *.egg-info/
 *.pyc
 .venv/
+env/
+venv/
 dist/
 build/
+*.so
+.Python
+.eggs/
+*.egg
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
+# 外部依赖/临时克隆（仅编译时用到，不应提交）
+SageAttention/
 
-# Junction / 临时文件
+# 临时脚本（benchmark、一次性测试）
+benchmark*.py
+generate_cat.py
+
+# Junction / 临时文件 / 工作流缓存
+comfyui-main
 comfyui-main/
 comfy-anima-tmp/
 workflow.json
-output.txt
+
+# IDE / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

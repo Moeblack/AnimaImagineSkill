@@ -32,6 +32,12 @@ model:
   device: "cuda"          # cuda / cpu / mps
   low_vram: false         # 低显存模式（~8GB 可跑）
 
+# --- 性能优化 ---
+optimization:
+  sage_attention: true    # 启用 SageAttention 加速 DiT（需安装 sageattention）
+  compile_models: true    # 启用 torch.compile 加速 DiT（常驻服务推荐）
+  clear_cuda_cache: false # 每次生成后清空 CUDA 缓存（常驻服务建议关闭）
+
 # --- Tokenizer 路径 ---
 # 启动时需要两个 tokenizer。如果路径有效则直接本地加载，不联网。
 # 留空 / 路径无效则自动从 HuggingFace 下载。

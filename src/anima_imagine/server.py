@@ -113,6 +113,8 @@ async def generate_anima_image(
     seed: int = -1,
     steps: int = 20,
     aspect_ratio: str = "3:4",
+    width: int = 0,
+    height: int = 0,
     cfg_scale: float = 4.5,
 ) -> list:
     """Generate an Anima anime/illustration image with structured fields.
@@ -121,6 +123,8 @@ async def generate_anima_image(
     字段严格分离：character 只放角色名，series 只放作品名，tags 不含角色名/作品名。
 
     示例:
+    # 自定义分辨率：width=1024, height=1536 (约 1.5MP)
+    # 当 width 和 height 同时大于 0 时，aspect_ratio 会被忽略
     generate_anima_image(
       count="1girl", character="hatsune miku", series="vocaloid",
       artist="@fkey", appearance="long twintails, aqua hair, aqua eyes",
@@ -136,8 +140,9 @@ async def generate_anima_image(
         tags=tags, nltags=nltags, environment=environment,
     )
     return await _do_generate(
-        prompt=prompt, negative_prompt=neg, aspect_ratio=aspect_ratio,
-        width=0, height=0, steps=steps, seed=seed, cfg_scale=cfg_scale,
+        prompt=prompt, negative_prompt=neg,
+        aspect_ratio=aspect_ratio if not (width > 0 and height > 0) else "custom",
+        width=width, height=height, steps=steps, seed=seed, cfg_scale=cfg_scale,
     )
 
 
@@ -151,6 +156,8 @@ async def reroll_anima_image(
     artist: str = "",
     tags: str = "",
     steps: int = 0,
+    width: int = 0,
+    height: int = 0,
     aspect_ratio: str = "",
     cfg_scale: float = 0,
 ) -> list:
@@ -163,6 +170,7 @@ async def reroll_anima_image(
     - 换种子重抽：reroll_anima_image(filename="...", seed=-1)
     - 换画师：reroll_anima_image(filename="...", artist="@toridamono")
     - 换比例：reroll_anima_image(filename="...", aspect_ratio="16:9")
+    - 换分辨率：reroll_anima_image(filename="...", width=1024, height=1536)
     """
     # 读取原始元数据
     meta = storage.get_meta_by_path(filename)
@@ -189,8 +197,9 @@ async def reroll_anima_image(
     return await _do_generate(
         prompt=final_prompt,
         negative_prompt=orig_neg,
-        aspect_ratio=aspect_ratio or meta.get("aspect_ratio", "3:4"),
-        width=0, height=0,
+        aspect_ratio=(aspect_ratio or meta.get("aspect_ratio", "3:4"))
+            if not (width > 0 and height > 0) else "custom",
+        width=width, height=height,
         steps=steps if steps > 0 else meta.get("steps", 20),
         seed=seed,
         cfg_scale=cfg_scale if cfg_scale > 0 else meta.get("cfg_scale", 4.5),
@@ -281,6 +290,10 @@ def main():
 
     # 加载模型（阻塞直到完成）
     pipeline.load()
+
+    print(f"  Optimization : sage_attention={pipeline.sage_attention}, "
+          f"compile={pipeline.compile_models}, "
+          f"clear_cuda_cache={pipeline.clear_cuda_cache}")
 
     print(f"\n  MCP Endpoint : http://{cfg.host}:{cfg.port}/mcp/")
     print(f"  Gallery      : http://{cfg.host}:{cfg.port}/")
