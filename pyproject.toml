@@ -1,0 +1,89 @@
+[project]
+name = "anima-imagine-skill"
+version = "0.1.0"
+description = "AnimaImagineSkill — Standalone Anima anime/illustration MCP server with gallery"
+readme = "README.md"
+license = "MIT"
+# 与 README 同步：要求 Python ≥ 3.13（DiffSynth + fastmcp 最新特性需要 3.13+）
+requires-python = ">=3.13"
+authors = [
+    { name = "Moeblack" },
+]
+keywords = ["anima", "anime", "illustration", "mcp", "diffsynth", "ai-agent", "tool-use"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    # MCP Server: Streamable HTTP 传输 + custom_route 画廊路由
+    "fastmcp",
+    # 图像处理
+    "Pillow",
+    # YAML 配置解析
+    "pyyaml",
+    # ---- 以下为 GPU 推理依赖 ----
+    # PyTorch CUDA 版必须在安装本包之前先装好（pip 不会覆盖已安装的版本）：
+    #   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+    # 这里声明版本约束，但不指定 index（避免 pip 从 PyPI 拉 CPU 版覆盖）。
+    # 用 uv 的用户由下方 [tool.uv.index] + [tool.uv.sources] 自动处理。
+    "torch>=2.0",
+    "torchvision",
+    "torchaudio",
+    # DiffSynth-Studio: Anima 官方一等支持的推理框架
+    # PyPI 上 diffsynth>=2.0.8 已包含 AnimaImagePipeline。
+    # 若 PyPI 版本过旧，手动: pip install git+https://github.com/modelscope/DiffSynth-Studio.git
+    "diffsynth>=2.0.8",
+]
+
+[project.urls]
+Homepage = "https://github.com/Moeblack/AnimaImagineSkill"
+Repository = "https://github.com/Moeblack/AnimaImagineSkill"
+Issues = "https://github.com/Moeblack/AnimaImagineSkill/issues"
+
+[project.scripts]
+# 命令行入口: anima-imagine 即可启动服务
+anima-imagine = "anima_imagine.server:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# gallery.html 等非 Python 文件必须显式声明，否则 wheel 打包不会包含它们
+[tool.setuptools.package-data]
+anima_imagine = ["*.html"]
+
+# ============================================================
+# PyTorch CUDA 版本配置（uv sync 时生效）
+#
+# 默认使用南京大学镜像（国内直连，速度快）。
+# RTX 5090 (Blackwell) 用户请改为 cu130：
+#   url = "https://mirror.nju.edu.cn/pytorch/whl/cu130/"
+#
+# 海外用户可换回 PyTorch 官方源：
+#   url = "https://download.pytorch.org/whl/cu124/"
+#   url = "https://download.pytorch.org/whl/cu130/"
+# ============================================================
+
+# PyTorch CUDA 专属源（默认南京大学镜像，国内直连无需代理）
+# explicit = true 确保只有下方声明的包才走此 index。
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://mirror.nju.edu.cn/pytorch/whl/cu124/"
+explicit = true
+
+# 指定 torch 系列包走 CUDA 专属源
+# 三个都要声明，否则 torchvision/torchaudio 会从 PyPI 拉 CPU 版。
+[tool.uv.sources]
+torch = { index = "pytorch" }
+torchvision = { index = "pytorch" }
+torchaudio = { index = "pytorch" }
+# DiffSynth: uv 环境下从 GitHub 拉最新版（保证包含 Anima 支持），
+# 而 pip install 时走 PyPI 上的 diffsynth>=2.0.8。
+diffsynth = { git = "https://github.com/modelscope/DiffSynth-Studio.git" }

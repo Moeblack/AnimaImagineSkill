@@ -1,0 +1,27 @@
+# 本地配置（包含机器相关路径，不应提交）
+config.yaml
+
+# 生成的图片
+output/
+
+# 模型权重 + tokenizer + 缓存（体积大，不应提交）
+Anima/
+models/
+*.safetensors
+*.gguf
+_hf_cache/
+
+# Python
+__pycache__/
+*.egg-info/
+*.pyc
+.venv/
+dist/
+build/
+
+
+# Junction / 临时文件
+comfyui-main/
+comfy-anima-tmp/
+workflow.json
+output.txt

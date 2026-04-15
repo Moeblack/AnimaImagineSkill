@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AnimaImagine Gallery</title>
+<style>
+/* ============================================================
+   暗色主题画廊，CSS columns 实现瀑布流布局。
+   不依赖任何框架，自包含 HTML/CSS/JS。
+   ============================================================ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #0f0f1a;
+  color: #e0e0e8;
+  font-family: -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+  min-height: 100vh;
+}
+
+/* --- 顶部导航 --- */
+.header {
+  position: sticky; top: 0; z-index: 100;
+  background: #16162a;
+  border-bottom: 1px solid #2a2a44;
+  padding: 12px 20px;
+  display: flex; align-items: center; gap: 16px;
+  flex-wrap: wrap;
+}
+.header h1 {
+  font-size: 18px; font-weight: 600;
+  background: linear-gradient(135deg, #a78bfa, #60a5fa);
+  /* 渐变文字效果：需要同时写标准属性和 -webkit- 前缀以兼容各浏览器 */
+  background-clip: text; -webkit-background-clip: text;
+  color: transparent; -webkit-text-fill-color: transparent;
+}
+.header select, .header input {
+  background: #1e1e38; color: #e0e0e8;
+  border: 1px solid #3a3a5c; border-radius: 6px;
+  padding: 6px 10px; font-size: 13px;
+}
+.header .stats {
+  margin-left: auto; font-size: 12px; color: #888;
+}
+
+/* --- 瀑布流网格（CSS columns） --- */
+.masonry {
+  column-width: 280px; /* 响应式核心：设置最小列宽，浏览器自动计算列数 */
+  column-gap: 16px;
+  padding: 20px;
+  width: 100%;
+  max-width: 1800px;
+  margin: 0 auto;
+}
+
+/* --- 卡片 --- */
+.card {
+  break-inside: avoid;
+  margin-bottom: 16px;
+  background: rgba(26, 26, 48, 0.6);
+  backdrop-filter: blur(10px); /* 增加毛玻璃质感 */
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: transform .2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.card:hover { transform: translateY(-4px); box-shadow: 0 10px 20px rgba(0,0,0,0.3); }
+
+.card img {
+  width: 100%; display: block; cursor: pointer;
+  /* 加载前显示占位色 */
+  background: #252545;
+  min-height: 80px;
+}
+
+.card .info {
+  padding: 8px 10px;
+}
+
+/* --- 标签 --- */
+.tags {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-bottom: 6px;
+}
+.tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 18px;
+  background: #2a2a48;
+  color: #b0b0c8;
+  cursor: pointer;
+  white-space: nowrap;
+}
+/* 特殊标签配色 */
+.tag.artist   { background: #3b1f6e; color: #c4a8ff; }   /* 画师: 紫 */
+.tag.quality  { background: #5c4a0e; color: #ffd866; }   /* 质量: 金 */
+.tag.safety   { background: #0e4a2a; color: #6ee7a0; }   /* 安全: 绿 */
+.tag.nsfw     { background: #5c0e1a; color: #ff8a9e; }   /* NSFW: 红 */
+.tag.score    { background: #0e3a5c; color: #7ec8ff; }   /* 分数: 蓝 */
+.tag.count    { background: #2e4a3a; color: #a0d8b8; }   /* 人数: 青 */
+
+.meta-line {
+  font-size: 11px; color: #666;
+  display: flex; gap: 8px; flex-wrap: wrap;
+}
+
+/* --- Lightbox --- */
+.lightbox {
+  display: none;
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(0,0,0,.92);
+  justify-content: center; align-items: center;
+  cursor: zoom-out;
+}
+.lightbox.active { display: flex; }
+.lightbox img {
+  max-width: 95vw; max-height: 95vh;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+/* --- 加载/空状态 --- */
+.loading, .empty {
+  text-align: center; padding: 60px 20px;
+  color: #666; font-size: 14px;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>✨ AnimaImagine Gallery</h1>
+  <select id="datePicker">
+    <option value="">全部日期</option>
+  </select>
+  <input id="tagFilter" type="text" placeholder="输入标签过滤..." />
+  <span class="stats" id="stats"></span>
+</div>
+
+<div class="masonry" id="gallery"></div>
+
+<div class="lightbox" id="lightbox">
+  <img id="lightboxImg" src="" alt="full" />
+</div>
+
+<script>
+/* ============================================================
+   画廊前端逻辑。
+   从 /api/images 拉取数据，渲染卡片，支持日期筛选 + 标签过滤。
+   ============================================================ */
+
+const gallery  = document.getElementById('gallery');
+const datePicker = document.getElementById('datePicker');
+const tagFilter  = document.getElementById('tagFilter');
+const statsEl    = document.getElementById('stats');
+const lightbox   = document.getElementById('lightbox');
+const lightboxImg = document.getElementById('lightboxImg');
+
+let allImages = [];  // 全量元数据缓存
+let lastJsonString = ""; // 用于检测数据是否变化
+
+// --- 标签分类规则 ---
+function tagClass(tag) {
+  const t = tag.toLowerCase();
+  if (t.startsWith('@'))                         return 'artist';
+  if (/^(safe|sensitive)$/.test(t))               return 'safety';
+  if (/^(nsfw|explicit)$/.test(t))                return 'nsfw';
+  if (/^(masterpiece|best quality|highres)/.test(t)) return 'quality';
+  if (/^score_/.test(t))                          return 'score';
+  if (/^\d*(girl|boy|other)s?$/.test(t) || t === 'no humans') return 'count';
+  return '';
+}
+
+// --- 渲染单张卡片 ---
+function renderCard(img) {
+  const date = img.date || '';
+  const fn   = img.filename || '';
+  const relPath = `${date}/${fn}`;
+  const thumbUrl = `/api/image?path=${encodeURIComponent(relPath)}&thumb=1`;
+  const fullUrl  = `/api/image?path=${encodeURIComponent(relPath)}`;
+
+  // 标签 HTML
+  const tags = (img.tags || []).slice(0, 20);  // 最多显示 20 个
+  const tagsHtml = tags.map(t =>
+    `<span class="tag ${tagClass(t)}" onclick="filterByTag('${t.replace(/'/g,"\\'")}')"
+          title="${t}">${t}</span>`
+  ).join('');
+
+  return `
+    <div class="card">
+      <img src="${thumbUrl}" alt="" loading="lazy"
+           onclick="openLightbox('${fullUrl}')" />
+      <div class="info">
+        <div class="tags">${tagsHtml}</div>
+        <div class="meta-line">
+          <span>seed: ${img.seed ?? '?'}</span>
+          <span>${img.width}×${img.height}</span>
+          <span>${img.steps}steps</span>
+          <span>${(img.generation_time || 0).toFixed(1)}s</span>
+          <span>${date}</span>
+        </div>
+      </div>
+    </div>`;
+}
+
+// --- 渲染全部卡片 ---
+function renderAll(images) {
+  if (images.length === 0) {
+    gallery.innerHTML = '<div class="empty">还没有图片。通过 MCP 工具调用 generate_anima_image 开始生成吧！</div>';
+  } else {
+    gallery.innerHTML = images.map(renderCard).join('');
+  }
+  statsEl.textContent = `${images.length} 张图片`;
+}
+
+// --- 过滤逻辑 ---
+function applyFilter() {
+  const date = datePicker.value;
+  const kw = tagFilter.value.trim().toLowerCase();
+  let filtered = allImages;
+  if (date) filtered = filtered.filter(i => i.date === date);
+  if (kw) filtered = filtered.filter(i =>
+    (i.tags || []).some(t => t.toLowerCase().includes(kw))
+  );
+  renderAll(filtered);
+}
+
+// 点击标签快速过滤
+function filterByTag(tag) {
+  tagFilter.value = tag;
+  applyFilter();
+}
+
+// --- Lightbox ---
+function openLightbox(url) {
+  lightboxImg.src = url;
+  lightbox.classList.add('active');
+}
+lightbox.addEventListener('click', () => {
+  lightbox.classList.remove('active');
+  lightboxImg.src = '';
+});
+
+// --- 键盘: Esc 关闭 lightbox ---
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') lightbox.classList.remove('active');
+});
+
+// --- 初始加载 ---
+async function loadData() {
+  if (allImages.length === 0) {
+    gallery.innerHTML = '<div class="loading">正在寻找精美画作...</div>';
+  }
+  try {
+    const resp = await fetch('/api/images');
+    const data = await resp.json();
+
+    // 性能优化：只有当数据真正变化时才更新 DOM，防止 30s 自动刷新导致的闪烁
+    const currentJsonString = JSON.stringify(data.images);
+    if (currentJsonString === lastJsonString) return;
+    
+    lastJsonString = currentJsonString;
+    allImages = data.images || [];
+
+    // 填充日期选择器
+    const dates = data.dates || [];
+    const currentPickerVal = datePicker.value;
+    datePicker.innerHTML = '<option value="">全部日期</option>' +
+      dates.map(d => `<option value="${d}">${d}</option>`).join('');
+    // 保持用户当前的筛选状态
+    datePicker.value = currentPickerVal;
+
+    applyFilter();
+  } catch (err) {
+    gallery.innerHTML = `<div class="empty">加载失败: ${err.message}</div>`;
+  }
+}
+
+datePicker.addEventListener('change', applyFilter);
+tagFilter.addEventListener('input', applyFilter);
+
+// 页面加载时拉取数据
+loadData();
+
+// 每 30 秒自动刷新（新图会自动出现）
+setInterval(loadData, 30000);
+</script>
+</body>
+</html>

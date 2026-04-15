@@ -1,0 +1,44 @@
+# ============================================================
+# AnimaImagineSkill 配置文件
+#
+# 首次使用请复制本文件并修改路径：
+#   cp config.example.yaml config.yaml          # Linux/macOS
+#   Copy-Item config.example.yaml config.yaml   # Windows PowerShell
+#
+# 所有路径支持绝对路径和相对路径（相对于服务启动时的工作目录）。
+# 环境变量优先级高于本文件（方便 Docker / CI 覆盖）。
+#
+# 默认目录结构（所有模型统一在 models/ 下，按类别分子目录）：
+#   models/
+#   ├── diffusion_models/   ← Anima DiT 扩散模型
+#   ├── text_encoders/      ← Qwen3 文本编码器权重
+#   ├── vae/                ← Qwen-Image VAE
+#   └── tokenizers/         ← tokenizer 文件（不含模型权重）
+#       ├── qwen3-0.6b/
+#       └── t5xxl/
+# ============================================================
+
+# --- 服务器 ---
+server:
+  host: "0.0.0.0"      # 监听地址
+  port: 8000            # 监听端口
+
+# --- 模型路径 ---
+# model_dir 指向包含 diffusion_models/ text_encoders/ vae/ 三个子目录的文件夹。
+# 留空则从 HuggingFace / ModelScope 自动下载（首次约 14 GB）。
+model:
+  model_dir: "./models"   # 模型根目录（download_anima.py 默认下载到此处）
+  model_version: "preview3"  # Anima 版本: preview / preview2 / preview3
+  device: "cuda"          # cuda / cpu / mps
+  low_vram: false         # 低显存模式（~8GB 可跑）
+
+# --- Tokenizer 路径 ---
+# 启动时需要两个 tokenizer。如果路径有效则直接本地加载，不联网。
+# 留空 / 路径无效则自动从 HuggingFace 下载。
+tokenizer:
+  qwen_path: "./models/tokenizers/qwen3-0.6b"   # Qwen3-0.6B tokenizer
+  t5xxl_path: "./models/tokenizers/t5xxl"        # T5-xxl tokenizer
+
+# --- 输出 ---
+output:
+  dir: "./output"       # 生成图片保存目录（按日期自动分文件夹）
