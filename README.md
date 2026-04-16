@@ -8,7 +8,7 @@ AI 客户端 (Cursor / Claude / Cherry Studio)
     ▼
 AnimaImagineSkill 服务器
     ├─ generate_anima_image()   MCP 工具
-    ├─ 图片画廊网页             http://localhost:8000/
+    ├─ 图片画廊网页             http://localhost:8008/
     └─ DiffSynth AnimaImagePipeline  (Anima 常驻显存)
 ```
 
@@ -151,7 +151,7 @@ Copy-Item config.example.yaml config.yaml
 # config.yaml
 server:
   host: "0.0.0.0"
-  port: 8000
+  port: 8008
 
 model:
   model_dir: "./models"      # 指向 diffusion_models/ text_encoders/ vae/ 所在目录
@@ -177,7 +177,7 @@ output:
 | 环境变量 | 对应 config.yaml | 默认值 |
 |---|---|---|
 | `ANIMA_HOST` | `server.host` | `0.0.0.0` |
-| `ANIMA_PORT` | `server.port` | `8000` |
+| `ANIMA_PORT` | `server.port` | `8008` |
 | `ANIMA_MODEL_DIR` | `model.model_dir` | （空，自动下载） |
 | `ANIMA_MODEL_VERSION` | `model.model_version` | `preview3` |
 | `ANIMA_DEVICE` | `model.device` | `cuda` |
@@ -207,9 +207,9 @@ python -m anima_imagine
 
 | 地址 | 说明 |
 |---|---|
-| `http://localhost:8000/mcp/` | MCP 端点（AI 客户端连接） |
-| `http://localhost:8000/` | 图片画廊（瀑布流浏览） |
-| `http://localhost:8000/health` | 健康检查 |
+| `http://localhost:8008/mcp/` | MCP 端点（AI 客户端连接） |
+| `http://localhost:8008/` | 图片画廊（瀑布流浏览） |
+| `http://localhost:8008/health` | 健康检查 |
 
 ---
 
@@ -224,7 +224,7 @@ python -m anima_imagine
   "mcpServers": {
     "anima-imagine": {
       "type": "streamable-http",
-      "url": "http://localhost:8000/mcp/"
+      "url": "http://localhost:8008/mcp/"
     }
   }
 }
@@ -232,7 +232,7 @@ python -m anima_imagine
 
 ### 2. 加载 Skill
 
-将 `skill/SKILL.md` 添加为客户端的 Skill / System Prompt，AI 就会学会 Anima 的标签规范和提示词写法。
+将 `AnimaImagineSkill/SKILL.md` 添加为客户端的 Skill / System Prompt，AI 就会学会 Anima 的标签规范和提示词写法。
 
 ### 3. 开始使用
 
@@ -290,7 +290,7 @@ AnimaImagineSkill/
 │   ├── storage.py            # 日期归档 + 缩略图
 │   ├── resolution.py         # 比例 → 分辨率映射
 │   └── gallery.html          # 瀑布流画廊网页
-├── skill/
+├── AnimaImagineSkill/
 │   ├── SKILL.md              # 提示词工程师 Skill
 │   └── references/
 │       ├── artist-list.md    # 画师收藏

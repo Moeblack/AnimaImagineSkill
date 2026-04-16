@@ -21,7 +21,7 @@
 # --- 服务器 ---
 server:
   host: "0.0.0.0"      # 监听地址
-  port: 8000            # 监听端口
+  port: 8008            # 监听端口
 
 # --- 模型路径 ---
 # model_dir 指向包含 diffusion_models/ text_encoders/ vae/ 三个子目录的文件夹。
