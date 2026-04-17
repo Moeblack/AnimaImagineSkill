@@ -18,12 +18,15 @@ import base64
 import io
 import os
 import json
+import time
 from pathlib import Path
 
 from fastmcp import FastMCP
 from mcp.types import TextContent, ImageContent
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
+
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from anima_imagine.pipeline import AnimaPipeline
 from anima_imagine.storage import ImageStorage
@@ -64,6 +67,48 @@ _CODEX_DIR = resolve_codex_dir([
 ])
 codex = CodexIndex(_CODEX_DIR if _CODEX_DIR else _CWD)
 
+
+
+class SecurityMiddleware(BaseHTTPMiddleware):
+    """简单鉴权 + 内存级 fail2ban。默认关闭，供远程部署时手动开启。"""
+
+    def __init__(self, app, cfg: Config):
+        super().__init__(app)
+        self.cfg = cfg
+        self._banned_ips: dict[str, float] = {}
+        self._failed_attempts: dict[str, list[float]] = {}
+
+    async def dispatch(self, request: Request, call_next):
+        # 获取真实 IP（支持反向代理后的 X-Forwarded-For）
+        forwarded = request.headers.get("x-forwarded-for")
+        client_ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
+        now = time.time()
+
+        # fail2ban: 检查是否已被封禁
+        if self.cfg.fail2ban_enabled:
+            ban_until = self._banned_ips.get(client_ip)
+            if ban_until and now < ban_until:
+                return JSONResponse({"error": "IP banned"}, status_code=403)
+            elif ban_until and now >= ban_until:
+                del self._banned_ips[client_ip]
+
+        # 鉴权: Bearer Token
+        expected = f"Bearer {self.cfg.auth_token}"
+        auth_header = request.headers.get("authorization", "")
+        if auth_header != expected:
+            if self.cfg.fail2ban_enabled:
+                attempts = self._failed_attempts.get(client_ip, [])
+                window = self.cfg.fail2ban_window_seconds
+                attempts = [t for t in attempts if now - t < window]
+                attempts.append(now)
+                self._failed_attempts[client_ip] = attempts
+                if len(attempts) >= self.cfg.fail2ban_max_attempts:
+                    self._banned_ips[client_ip] = now + self.cfg.fail2ban_ban_seconds
+                    del self._failed_attempts[client_ip]
+                    return JSONResponse({"error": "IP banned"}, status_code=403)
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+
+        return await call_next(request)
 
 # ============================================================
 # 内部：公共生图逻辑（供多个工具复用）
@@ -453,10 +498,21 @@ def main():
         print(f"  Codex        : {stats['fine_entries']} entries, "
               f"{stats['sections']} sections, from {_CODEX_DIR}")
 
+    # 安全配置
+    if cfg.security_enabled:
+        if not cfg.auth_token:
+            print("  [WARN] security.enabled=true 但 auth_token 为空，远程暴露存在风险")
+        # fastmcp 内部 Starlette app 通常保存在 _app（1.x 版本）
+        app = getattr(mcp, "_app", None) or getattr(mcp, "app", None)
+        if app is not None:
+            app.add_middleware(SecurityMiddleware, cfg=cfg)
+        print(f"  Security     : enabled | fail2ban={cfg.fail2ban_enabled}")
+    else:
+        print("  Security     : disabled (set security.enabled=true to protect public endpoints)")
+
     print()
 
     # 启动 Streamable HTTP MCP 服务
-    # fastmcp 会自动用 uvicorn 跑 Starlette 应用
     mcp.run(transport="streamable-http", host=cfg.host, port=cfg.port)
 
 

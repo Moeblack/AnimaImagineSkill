@@ -38,6 +38,15 @@ optimization:
   compile_models: true    # 启用 torch.compile 加速 DiT（常驻服务推荐）
   clear_cuda_cache: false # 每次生成后清空 CUDA 缓存（常驻服务建议关闭）
 
+# --- 安全（远程公网部署时建议开启） ---
+security:
+  enabled: false               # 设为 true 开启 Bearer Token 鉴权
+  auth_token: ""               # Bearer Token 值，建议设为随机强密码
+  fail2ban_enabled: false      # 设为 true 开启失败登录封禁
+  fail2ban_max_attempts: 5     # 窗口内最大失败次数
+  fail2ban_window_seconds: 300 # 统计窗口（秒）
+  fail2ban_ban_seconds: 3600   # 封禁时长（秒）
+
 # --- Tokenizer 路径 ---
 # 启动时需要两个 tokenizer。如果路径有效则直接本地加载，不联网。
 # 留空 / 路径无效则自动从 HuggingFace 下载。

@@ -45,6 +45,14 @@ class Config:
     qwen_tokenizer_path: str = ""
     t5xxl_tokenizer_path: str = ""
 
+    # --- 安全 ---
+    security_enabled: bool = False
+    auth_token: str = ""
+    fail2ban_enabled: bool = False
+    fail2ban_max_attempts: int = 5
+    fail2ban_window_seconds: int = 300
+    fail2ban_ban_seconds: int = 3600
+
     # --- 输出 ---
     output_dir: str = "./output"
 
@@ -111,6 +119,7 @@ def load_config(yaml_path: str = "config.yaml") -> Config:
     mdl = data.get("model", {})
     opt = data.get("optimization", {})
     tok = data.get("tokenizer", {})
+    sec = data.get("security", {})
     out = data.get("output", {})
 
     def _bool_env(name: str, default: bool) -> bool:
@@ -138,6 +147,14 @@ def load_config(yaml_path: str = "config.yaml") -> Config:
         # Tokenizer
         qwen_tokenizer_path=os.getenv("ANIMA_QWEN_TOKENIZER", tok.get("qwen_path", "")),
         t5xxl_tokenizer_path=os.getenv("ANIMA_T5XXL_TOKENIZER", tok.get("t5xxl_path", "")),
+
+        # 安全
+        security_enabled=_bool_env("ANIMA_SECURITY_ENABLED", sec.get("enabled", False)),
+        auth_token=os.getenv("ANIMA_AUTH_TOKEN", sec.get("auth_token", "")),
+        fail2ban_enabled=_bool_env("ANIMA_FAIL2BAN_ENABLED", sec.get("fail2ban_enabled", False)),
+        fail2ban_max_attempts=int(os.getenv("ANIMA_FAIL2BAN_MAX_ATTEMPTS", sec.get("fail2ban_max_attempts", 5))),
+        fail2ban_window_seconds=int(os.getenv("ANIMA_FAIL2BAN_WINDOW_SECONDS", sec.get("fail2ban_window_seconds", 300))),
+        fail2ban_ban_seconds=int(os.getenv("ANIMA_FAIL2BAN_BAN_SECONDS", sec.get("fail2ban_ban_seconds", 3600))),
 
         # 输出
         output_dir=os.getenv("ANIMA_OUTPUT_DIR", out.get("dir", "./output")),

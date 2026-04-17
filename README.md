@@ -264,6 +264,14 @@ optimization:
   compile_models: true      # 启用 torch.compile 加速 DiT（常驻服务推荐）
   clear_cuda_cache: false   # 每次生成后清空 CUDA 缓存（常驻服务建议关闭）
 
+security:
+  enabled: false               # 远程公网部署时建议设为 true
+  auth_token: ""               # Bearer Token（建议随机强密码）
+  fail2ban_enabled: false      # 失败过多自动封禁 IP
+  fail2ban_max_attempts: 5
+  fail2ban_window_seconds: 300 # 统计窗口 5 分钟
+  fail2ban_ban_seconds: 3600   # 封禁 1 小时
+
 tokenizer:
   qwen_path: "./models/tokenizers/qwen3-0.6b"
   t5xxl_path: "./models/tokenizers/t5xxl"
@@ -286,9 +294,24 @@ output:
 | `ANIMA_SAGE_ATTENTION` | `optimization.sage_attention` | `true` |
 | `ANIMA_COMPILE_MODELS` | `optimization.compile_models` | `true` |
 | `ANIMA_CLEAR_CUDA_CACHE` | `optimization.clear_cuda_cache` | `false` |
+| `ANIMA_SECURITY_ENABLED` | `security.enabled` | `false` |
+| `ANIMA_AUTH_TOKEN` | `security.auth_token` | `（空）` |
+| `ANIMA_FAIL2BAN_ENABLED` | `security.fail2ban_enabled` | `false` |
+| `ANIMA_FAIL2BAN_MAX_ATTEMPTS` | `security.fail2ban_max_attempts` | `5` |
+| `ANIMA_FAIL2BAN_WINDOW_SECONDS` | `security.fail2ban_window_seconds` | `300` |
+| `ANIMA_FAIL2BAN_BAN_SECONDS` | `security.fail2ban_ban_seconds` | `3600` |
 | `ANIMA_T5XXL_TOKENIZER` | `tokenizer.t5xxl_path` | （空，自动下载） |
 | `ANIMA_OUTPUT_DIR` | `output.dir` | `./output` |
 | `ANIMA_CODEX_DIR` | （无） | （空，按候选路径自动寻址） |
+
+### 远程部署安全建议
+
+若服务需要暴露在公网或团队内网之外，**强烈建议开启鉴权**（默认关闭）：
+
+1. 在 `config.yaml` 中设置 `security.enabled: true` 并填写 `auth_token`。
+2. 建议同时开启 `fail2ban_enabled: true`，防止 token 被暴力穷举。
+3. 所有端点（`/`、`/mcp/`、`/api/*`、`/health`）都会受到统一保护。
+4. MCP 客户端连接时需要在 HTTP Header 中携带：`Authorization: Bearer <your_token>`。
 
 ---
 
