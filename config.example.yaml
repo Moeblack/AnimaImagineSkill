@@ -39,13 +39,18 @@ optimization:
   clear_cuda_cache: false # 每次生成后清空 CUDA 缓存（常驻服务建议关闭）
 
 # --- 安全（远程公网部署时建议开启） ---
+# 开启后，所有路由都需要认证：
+#   - /mcp/* → Bearer Token（AI 客户端在请求头携带 Authorization: Bearer <token>）
+#   - 网页端 → Cookie 自动认证（首次访问会 302 到 /login 登录页）
+#   - /login, /api/login → 白名单放行
+# fail2ban 对 Bearer 失败和登录密码错误都计数，达到阈值封禁 IP。
 security:
-  enabled: false               # 设为 true 开启 Bearer Token 鉴权
-  auth_token: ""               # Bearer Token 值，建议设为随机强密码
-  fail2ban_enabled: false      # 设为 true 开启失败登录封禁
-  fail2ban_max_attempts: 5     # 窗口内最大失败次数
-  fail2ban_window_seconds: 300 # 统计窗口（秒）
-  fail2ban_ban_seconds: 3600   # 封禁时长（秒）
+  enabled: false               # 设为 true 开启认证（MCP 用 Bearer Token，网页用登录页 Cookie）
+  auth_token: ""               # 认证密码，同时用于 Bearer Token 和网页登录，建议设为随机强密码
+  fail2ban_enabled: false      # 设为 true 开启失败封禁（暴力破解防护）
+  fail2ban_max_attempts: 5     # 窗口内最大失败次数（Bearer 错误 + 登录密码错误 共享计数）
+  fail2ban_window_seconds: 300 # 统计窗口（秒），窗口内达到上限则封禁
+  fail2ban_ban_seconds: 3600   # 封禁时长（秒），到期自动解封
 
 # --- Tokenizer 路径 ---
 # 启动时需要两个 tokenizer。如果路径有效则直接本地加载，不联网。

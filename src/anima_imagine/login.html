@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AnimaImagine · 登录</title>
+<style>
+/* ============================================================
+   登录页：与 gallery.html 共享暗色主题色系。
+   纯前端，无框架依赖，POST /api/login 完成认证后跳转 /。
+   ============================================================ */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: #0f0f1a;
+  color: #e0e0e8;
+  font-family: -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-card {
+  width: 340px;
+  background: #16162a;
+  border: 1px solid #2a2a44;
+  border-radius: 12px;
+  padding: 36px 28px;
+  text-align: center;
+}
+
+.login-card h1 {
+  font-size: 22px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  background: linear-gradient(135deg, #a78bfa, #60a5fa);
+  background-clip: text; -webkit-background-clip: text;
+  color: transparent; -webkit-text-fill-color: transparent;
+}
+
+.login-card .subtitle {
+  font-size: 13px;
+  color: #888;
+  margin-bottom: 28px;
+}
+
+.login-card input {
+  width: 100%;
+  background: #1e1e38;
+  color: #e0e0e8;
+  border: 1px solid #3a3a5c;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.login-card input:focus {
+  border-color: #a78bfa;
+}
+.login-card input::placeholder {
+  color: #666;
+}
+
+.login-card button {
+  width: 100%;
+  margin-top: 16px;
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #a78bfa, #60a5fa);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.login-card button:hover { opacity: 0.85; }
+.login-card button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.login-card .msg {
+  margin-top: 14px;
+  font-size: 13px;
+  min-height: 18px;
+  color: #f87171; /* 错误提示用红色 */
+}
+</style>
+</head>
+<body>
+
+<div class="login-card">
+  <h1>AnimaImagine</h1>
+  <p class="subtitle">请输入访问密码</p>
+
+  <form id="loginForm">
+    <input type="password" id="tokenInput" placeholder="Access Token" autocomplete="current-password" autofocus />
+    <button type="submit" id="loginBtn">登 录</button>
+  </form>
+  <div class="msg" id="msg"></div>
+</div>
+
+<script>
+// 登录逻辑：POST /api/login → Set-Cookie → 跳转 /
+const form = document.getElementById('loginForm');
+const input = document.getElementById('tokenInput');
+const btn = document.getElementById('loginBtn');
+const msg = document.getElementById('msg');
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const token = input.value.trim();
+  if (!token) { msg.textContent = '请输入密码'; return; }
+
+  btn.disabled = true;
+  msg.textContent = '';
+
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    if (res.ok) {
+      // 登录成功，cookie 已由服务端 Set-Cookie 设置，跳转到画廊
+      window.location.href = '/';
+    } else {
+      const data = await res.json();
+      msg.textContent = data.error || '密码错误';
+    }
+  } catch (err) {
+    msg.textContent = '网络错误: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

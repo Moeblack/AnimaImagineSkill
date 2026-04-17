@@ -405,6 +405,9 @@ async function doGenerate() {
       body: JSON.stringify(payload)
     });
     const data = await res.json();
+    // 安全中间件返回 401 时跳转到登录页（cookie 过期等场景）
+    if (res.status === 401) { window.location.href = '/login'; return; }
+
     if (res.ok && data.status === "ok") {
       statusEl.textContent = `生成完成！耗时 ${data.meta.generation_time}s`;
       setTimeout(() => { statusEl.textContent = ""; }, 5000);
@@ -532,6 +535,9 @@ async function loadData() {
   }
   try {
     const resp = await fetch('/api/images');
+    // 安全中间件返回 401 时跳转到登录页（cookie 过期等场景）
+    if (resp.status === 401) { window.location.href = '/login'; return; }
+
     const data = await resp.json();
 
     const currentJsonString = JSON.stringify(data.images);

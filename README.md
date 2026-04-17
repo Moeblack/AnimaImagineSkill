@@ -308,10 +308,12 @@ output:
 
 若服务需要暴露在公网或团队内网之外，**强烈建议开启鉴权**（默认关闭）：
 
-1. 在 `config.yaml` 中设置 `security.enabled: true` 并填写 `auth_token`。
-2. 建议同时开启 `fail2ban_enabled: true`，防止 token 被暴力穷举。
-3. 所有端点（`/`、`/mcp/`、`/api/*`、`/health`）都会受到统一保护。
-4. MCP 客户端连接时需要在 HTTP Header 中携带：`Authorization: Bearer <your_token>`。
+1. 在 `config.yaml` 中设置 `security.enabled: true`，并设置 `auth_token`（一个随机强密码）。
+2. 建议同时开启 `fail2ban_enabled: true`，防止密码被暴力穷举。
+3. **开启后的认证分流**：
+   - **MCP 端点**（`/mcp/*`）→ 在客户端配置中指定 Bearer Token，每次请求自动在 `Authorization` 头中携带。
+   - **网页端**（`/`、`/api/*`、`/health`）→ 首次访问会被 302 到 `/login`，输入密码后获得 30 天有效期的 Cookie，后续自动认证。
+   - **登录页**（`/login`、`/api/login`）→ 白名单放行，无需认证。
 
 ---
 
@@ -339,41 +341,94 @@ python -m anima_imagine
 
 ## 连接 AI 客户端
 
-### 1. 配置 MCP
+AI 客户端通过 **Streamable HTTP MCP** 连接本服务。支持 Cursor、Claude Desktop、Cherry Studio、LimCode 等所有支持 Streamable HTTP 的 MCP 客户端。
 
-在 Cursor / LimCode / Claude Desktop 的 MCP 配置中加入：
+### 1. MCP 配置示例
+
+将以下内容写入客户端的 MCP 配置文件（各客户端配置位置见下方「客户端配置位置」）：
 
 ```json
 {
   "mcpServers": {
     "anima-imagine": {
       "type": "streamable-http",
-      "url": "http://localhost:8008/mcp/"
+      "url": "http://localhost:8008/mcp/",
+      "headers": {}
     }
   }
 }
 ```
 
-### 2. 加载 Skill
+如果开启了安全认证（`security.enabled: true`），必须在 `headers` 中加入 Bearer Token：
 
-将 `AnimaImagineSkill/SKILL.md` 添加为客户端的 Skill / System Prompt，AI 就会学会 Anima 的标签规范和提示词写法。
+```json
+{
+  "mcpServers": {
+    "anima-imagine": {
+      "type": "streamable-http",
+      "url": "http://localhost:8008/mcp/",
+      "headers": {
+        "Authorization": "Bearer your_secret_token_here"
+      }
+    }
+  }
+}
+```
 
-### 3. 开始使用
+> **注意**：`url` 末尾的 `/` 是必需的（`http://localhost:8008/mcp/` 而不是 `/mcp`）。
 
-对 AI 说“画一个穿白裙的少女在花园里，竖屏 9:16”即可。
+### 2. 各客户端配置位置
 
-### 4. MCP 工具清单
-
-| 工具 | 用途 |
+| 客户端 | MCP 配置文件路径 |
 |---|---|
-| `generate_anima_image` | 结构化字段生图（推荐调用方式） |
-| `reroll_anima_image` | 基于历史图片参数重新生成 |
-| `list_codex_sections` | 列法典粗章节（带每章条目数） |
-| `list_codex_entries` | 列某章节下条目菜单（只有标题） |
-| `lookup_codex` | 按关键词 / 章节检索条目，返回「标题 + tag 块」 |
+| **Cursor** | `~/.cursor/mcp.json`（macOS/Linux）或 `%USERPROFILE%\.cursor\mcp.json`（Windows） |
+| **Claude Desktop** | `~/Library/Application Support/Claude/claude_desktop_config.json`（macOS）或 `%APPDATA%\Claude\claude_desktop_config.json`（Windows） |
+| **Cherry Studio** | 设置 → MCP → 添加 → 选择「Streamable HTTP」类型，填入 URL 和 Headers |
+| **LimCode** | 将 `mcp-config.json` 放在工作区根目录，LimCode 启动时自动加载 |
+
+### 3. nginx 反向代理场景
+
+如果通过 nginx 反向代理暴露到外网，配置示例：
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name anima.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8008;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+```
+
+> nginx 必须透传 `X-Forwarded-For`，否则 fail2ban 和真实 IP 获取会失效。
+
+### 4. 加载 Skill
+
+将本仓库根目录的 `SKILL.md` 添加为 AI 客户端的 Skill / System Prompt，AI 就会学会 Anima 的标签规范和提示词写法。
+
+### 5. 开始使用
+
+对 AI 说「画一个穿白裙的少女在花园里，竖屏 9:16」即可。
+
+### 6. MCP 工具清单
+
+| 工具 | 用途 | 需要 GPU |
+|---|---|---|
+| `generate_anima_image` | 结构化字段生图（推荐调用方式） | ✅ |
+| `reroll_anima_image` | 基于历史图片参数重新生成 | ✅ |
+| `list_codex_sections` | 列法典粗章节（带每章条目数） | ❌ |
+| `list_codex_entries` | 列某章节下条目菜单（只有标题） | ❌ |
+| `lookup_codex` | 按关键词 / 章节检索条目，返回「标题 + tag 块」 | ❌ |
 
 后三个 codex 查询工具**仅在 `AnimaImagineSkill/references/` 下有法典数据时生效**，
 见上文「法典数据准备」一节。没有数据时只会返回空数组，不会影响生图。
+
+---
 
 ---
 

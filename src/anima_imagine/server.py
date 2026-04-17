@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import io
 import os
+import hmac
 import json
 import time
 from pathlib import Path
@@ -24,9 +25,11 @@ from pathlib import Path
 from fastmcp import FastMCP
 from mcp.types import TextContent, ImageContent
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from starlette.middleware import Middleware
 
 from anima_imagine.pipeline import AnimaPipeline
 from anima_imagine.storage import ImageStorage
@@ -69,46 +72,131 @@ codex = CodexIndex(_CODEX_DIR if _CODEX_DIR else _CWD)
 
 
 
-class SecurityMiddleware(BaseHTTPMiddleware):
-    """简单鉴权 + 内存级 fail2ban。默认关闭，供远程部署时手动开启。"""
+# ============================================================
+# Cookie 签名工具函数（#2: HMAC-SHA256 无状态 session）
+# ============================================================
+# 用 HMAC-SHA256 对 auth_token 签名，生成 cookie 值。
+# 校验时重新计算并比对，不存服务端 session，重启不丢失。
 
-    def __init__(self, app, cfg: Config):
-        super().__init__(app)
+_COOKIE_NAME = "_anima_session"
+_HMAC_MESSAGE = b"anima_session"
+
+
+def _make_session_cookie(auth_token: str) -> str:
+    """用 auth_token 生成 cookie 值：HMAC-SHA256(auth_token, 'anima_session').hexdigest()"""
+    return hmac.new(auth_token.encode(), _HMAC_MESSAGE, "sha256").hexdigest()
+
+
+def _verify_session_cookie(cookie_value: str, auth_token: str) -> bool:
+    """常量时间比对 cookie 值，防止 timing attack。"""
+    expected = _make_session_cookie(auth_token)
+    return hmac.compare_digest(cookie_value, expected)
+
+
+# ============================================================
+# Fail2Ban 独立类（中间件 + 登录路由共享同一实例）
+# ============================================================
+# 之前 fail2ban 状态内嵌在 SecurityMiddleware 里，/api/login 白名单绕过了中间件，
+# 导致登录暴力破解不受限。抽成独立类后两边都能调用。
+
+class Fail2Ban:
+    """内存级 IP 封禁。线程安全靠 asyncio 单线程模型保证。"""
+
+    def __init__(self, cfg: Config):
         self.cfg = cfg
         self._banned_ips: dict[str, float] = {}
         self._failed_attempts: dict[str, list[float]] = {}
 
+    def is_banned(self, client_ip: str) -> bool:
+        """检查 IP 是否被封禁，顺便清理过期封禁。"""
+        if not self.cfg.fail2ban_enabled:
+            return False
+        now = time.time()
+        ban_until = self._banned_ips.get(client_ip)
+        if ban_until is None:
+            return False
+        if now < ban_until:
+            return True
+        # 封禁已过期，清理
+        del self._banned_ips[client_ip]
+        return False
+
+    def record_fail(self, client_ip: str):
+        """记录一次认证失败，达到阈值则封禁 IP。"""
+        if not self.cfg.fail2ban_enabled:
+            return
+        now = time.time()
+        attempts = self._failed_attempts.get(client_ip, [])
+        window = self.cfg.fail2ban_window_seconds
+        attempts = [t for t in attempts if now - t < window]
+        attempts.append(now)
+        self._failed_attempts[client_ip] = attempts
+        if len(attempts) >= self.cfg.fail2ban_max_attempts:
+            self._banned_ips[client_ip] = now + self.cfg.fail2ban_ban_seconds
+            del self._failed_attempts[client_ip]
+
+
+# 全局 fail2ban 实例（security_enabled=false 时所有方法都是 no-op）
+fail2ban = Fail2Ban(cfg)
+
+
+# ============================================================
+# 路径白名单（不需要任何认证即可访问）
+# ============================================================
+_PUBLIC_PATHS = frozenset({"/login", "/api/login"})
+
+
+class SecurityMiddleware(BaseHTTPMiddleware):
+    """路径分流鉴权 + 内存级 fail2ban。默认关闭，供远程部署时手动开启。
+
+    认证策略按路径分流：
+    - /login, /api/login  → 放行（白名单）
+    - /mcp/*              → Bearer Token（AI 客户端）
+    - 其他（/, /api/*, /health）→ Cookie _anima_session（浏览器）
+
+    fail2ban 只对 Bearer 失败和 /api/login 密码错误计数，
+    cookie 无效不计数（可能只是过期），直接 302 到登录页。
+    """
+
+    def __init__(self, app, cfg: Config, fail2ban_inst: Fail2Ban):
+        super().__init__(app)
+        self.cfg = cfg
+        self._f2b = fail2ban_inst
+
     async def dispatch(self, request: Request, call_next):
-        # 获取真实 IP（支持反向代理后的 X-Forwarded-For）
+        path = request.url.path
+
+        # ---- 白名单路径：直接放行 ----
+        if path in _PUBLIC_PATHS:
+            return await call_next(request)
+
+        # ---- 获取真实 IP ----
         forwarded = request.headers.get("x-forwarded-for")
         client_ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
-        now = time.time()
 
-        # fail2ban: 检查是否已被封禁
-        if self.cfg.fail2ban_enabled:
-            ban_until = self._banned_ips.get(client_ip)
-            if ban_until and now < ban_until:
-                return JSONResponse({"error": "IP banned"}, status_code=403)
-            elif ban_until and now >= ban_until:
-                del self._banned_ips[client_ip]
+        # ---- fail2ban 封禁检查 ----
+        if self._f2b.is_banned(client_ip):
+            return JSONResponse({"error": "IP banned"}, status_code=403)
 
-        # 鉴权: Bearer Token
-        expected = f"Bearer {self.cfg.auth_token}"
-        auth_header = request.headers.get("authorization", "")
-        if auth_header != expected:
-            if self.cfg.fail2ban_enabled:
-                attempts = self._failed_attempts.get(client_ip, [])
-                window = self.cfg.fail2ban_window_seconds
-                attempts = [t for t in attempts if now - t < window]
-                attempts.append(now)
-                self._failed_attempts[client_ip] = attempts
-                if len(attempts) >= self.cfg.fail2ban_max_attempts:
-                    self._banned_ips[client_ip] = now + self.cfg.fail2ban_ban_seconds
-                    del self._failed_attempts[client_ip]
-                    return JSONResponse({"error": "IP banned"}, status_code=403)
-            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        # ---- MCP 端点：Bearer Token ----
+        if path.startswith("/mcp"):
+            expected = f"Bearer {self.cfg.auth_token}"
+            auth_header = request.headers.get("authorization", "")
+            if auth_header != expected:
+                self._f2b.record_fail(client_ip)
+                return JSONResponse({"error": "Unauthorized"}, status_code=401)
+            return await call_next(request)
 
-        return await call_next(request)
+        # ---- 其他路径（画廊、API、health）：Cookie 认证 ----
+        cookie_val = request.cookies.get(_COOKIE_NAME, "")
+        if cookie_val and _verify_session_cookie(cookie_val, self.cfg.auth_token):
+            return await call_next(request)
+
+        # Cookie 无效：浏览器 302 到登录页，API 返回 401
+        accept = request.headers.get("accept", "")
+        if "text/html" in accept:
+            return RedirectResponse(url="/login", status_code=302)
+        return JSONResponse({"error": "Unauthorized", "login": "/login"}, status_code=401)
 
 # ============================================================
 # 内部：公共生图逻辑（供多个工具复用）
@@ -342,6 +430,56 @@ async def list_codex_entries(
 
 
 # ============================================================
+# 登录路由（#3: 白名单路径，不需要认证）
+# ============================================================
+
+@mcp.custom_route("/login", methods=["GET"])
+async def login_page(request: Request):
+    """返回登录页 HTML。白名单路径，SecurityMiddleware 会放行。"""
+    html_path = _HERE / "login.html"
+    html = html_path.read_text(encoding="utf-8")
+    return HTMLResponse(html)
+
+
+@mcp.custom_route("/api/login", methods=["POST"])
+async def api_login(request: Request):
+    """校验 token，成功则 Set-Cookie _anima_session。登录失败计入 fail2ban。
+
+    请求体: {"token": "..."}
+    成功: 200 + Set-Cookie
+    失败: 401（计入 fail2ban）
+    """
+    data = await request.json()
+    token = data.get("token", "")
+
+    # 登录路由虽在白名单（中间件放行），但仍需检查 fail2ban 封禁状态，
+    # 防止被封禁的 IP 继续尝试登录。
+    forwarded = request.headers.get("x-forwarded-for")
+    client_ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
+
+    if fail2ban.is_banned(client_ip):
+        return JSONResponse({"error": "IP banned"}, status_code=403)
+
+    if token == cfg.auth_token and cfg.auth_token:
+        # 认证成功：生成签名 cookie 并设置
+        cookie_value = _make_session_cookie(cfg.auth_token)
+        resp = JSONResponse({"status": "ok"})
+        # HttpOnly 防止 JS 读取；SameSite=Lax 防止 CSRF；
+        # Secure 由 nginx 层面保证（本地开发不强制）。
+        resp.set_cookie(
+            key=_COOKIE_NAME, value=cookie_value,
+            httponly=True, samesite="lax",
+            max_age=86400 * 30,  # 30 天有效
+        )
+        return resp
+
+    # 认证失败：计入 fail2ban，防止暴力破解密码。
+    # 使用全局 fail2ban 实例，与中间件共享封禁状态。
+    fail2ban.record_fail(client_ip)
+    return JSONResponse({"error": "密码错误"}, status_code=401)
+
+
+# ============================================================
 # 画廊路由：网页 + API
 # ============================================================
 
@@ -499,21 +637,33 @@ def main():
               f"{stats['sections']} sections, from {_CODEX_DIR}")
 
     # 安全配置
+    # [BUG FIX] 旧代码通过 getattr(mcp, "_app") 获取内部 app 来添加中间件，
+    # 但 FastMCP 没有 _app / app 属性（只有 http_app 方法），导致中间件从未被注册，
+    # 安全功能静默失败。正确做法是通过 mcp.http_app(middleware=...) 传入中间件，
+    # 再用 uvicorn 启动返回的 ASGI app。
+    user_middleware = []
     if cfg.security_enabled:
         if not cfg.auth_token:
             print("  [WARN] security.enabled=true 但 auth_token 为空，远程暴露存在风险")
-        # fastmcp 内部 Starlette app 通常保存在 _app（1.x 版本）
-        app = getattr(mcp, "_app", None) or getattr(mcp, "app", None)
-        if app is not None:
-            app.add_middleware(SecurityMiddleware, cfg=cfg)
+        # 传入全局 fail2ban 实例，让中间件和登录路由共享封禁状态
+        user_middleware.append(Middleware(SecurityMiddleware, cfg=cfg, fail2ban_inst=fail2ban))
         print(f"  Security     : enabled | fail2ban={cfg.fail2ban_enabled}")
     else:
         print("  Security     : disabled (set security.enabled=true to protect public endpoints)")
 
     print()
 
-    # 启动 Streamable HTTP MCP 服务
-    mcp.run(transport="streamable-http", host=cfg.host, port=cfg.port)
+    # 启动 Streamable HTTP MCP 服务。
+    # 当有自定义中间件时，必须走 http_app() + uvicorn 路径，因为 mcp.run() 不接受 middleware 参数。
+    if user_middleware:
+        import uvicorn
+        app = mcp.http_app(
+            transport="streamable-http",
+            middleware=user_middleware,
+        )
+        uvicorn.run(app, host=cfg.host, port=cfg.port)
+    else:
+        mcp.run(transport="streamable-http", host=cfg.host, port=cfg.port)
 
 
 if __name__ == "__main__":

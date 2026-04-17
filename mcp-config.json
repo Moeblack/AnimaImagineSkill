@@ -2,7 +2,10 @@
   "mcpServers": {
     "anima-imagine": {
       "type": "streamable-http",
-      "url": "http://localhost:8008/mcp"
+      "url": "http://localhost:8008/mcp",
+      "headers": {
+        "Authorization": "Bearer your_secret_token_here"
+      }
     }
   }
 }
