@@ -433,4 +433,14 @@ AnimaImagineSkill/
 
 ## License
 
-MIT
+[AGPL-3.0-or-later](./LICENSE)
+
+本项目采用 GNU Affero General Public License v3（或更新版本）。要点：
+
+- 你可以自由地使用、修改、分发本项目代码。
+- 修改后的版本必须同样以 AGPL 开源。
+- **AGPL 的关键条款（§13）**：如果你将本服务（或其衍生版本）作为网络服务对外提供
+  （包括 MCP endpoint、Web 面板等任何远程访问方式），必须向所有远程用户提供对应
+  的源码获取途径。
+
+简单地说：自己玩怎么改都行；公开提供服务就必须公开源码。
