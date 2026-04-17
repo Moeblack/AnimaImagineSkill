@@ -20,6 +20,28 @@ AnimaImagineSkill 服务器
 - NVIDIA GPU + CUDA（推荐 ≥ 12 GB 显存；低显存模式可在 8 GB 上跑）
 - 磁盘空间：模型文件约 14 GB + tokenizer 约 16 MB
 
+### Triton（必需）
+
+本服务默认开启 `torch.compile` 加速 DiT，而 `torch.compile` 依赖 Triton。**如果 Triton 缺失，服务启动或直接生图时会报错**（Windows 常见错误：`torch._inductor.exc.TritonMissing`）。
+
+- **Linux**：通常 PyTorch 已经自带 `triton`，无需额外操作。如缺失可执行：
+  ```bash
+  uv pip install triton
+  ```
+
+- **Windows**：PyTorch 官方未在 Windows 分发 Triton，必须手动安装社区维护的 `triton-windows`，并确保已安装 [Visual C++ Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe)。
+
+  | PyTorch | 推荐 Triton 版本 | 安装命令 |
+  |---|---|---|
+  | 2.10 及以上 | 3.6 | `uv pip install "triton-windows<3.7"` |
+  | 2.9 | 3.5 | `uv pip install "triton-windows<3.6"` |
+  | 2.8 | 3.4 | `uv pip install "triton-windows<3.5"` |
+  | 2.7 | 3.3 | `uv pip install "triton-windows<3.4"` |
+  | 2.6 | 3.2 | `uv pip install "triton-windows<3.3"` |
+
+- **不想/不能安装 Triton？**  
+  在 `config.yaml` 中将 `compile_models` 设为 `false`，或设置环境变量 `ANIMA_COMPILE_MODELS=false` 即可跳过编译，但会损失显著的性能提升。
+
 ---
 
 ## 安装
@@ -400,12 +422,14 @@ AnimaImagineSkill/
 服务内置了多项与 ComfyUI 对齐的加速优化，无需引入 ComfyUI 依赖：
 
 - **`torch.compile`**：服务启动时自动编译 DiT，首次生图有 5~10s 预热，之后每张图显著加速。
-- **SageAttention**：自动检测并启用。RTX 5090/Blackwell 用户需手动安装对应版本：
+  **Triton 安装方法见上文「环境要求 › Triton（必需）」。**
+- **SageAttention**：自动检测并启用。RTX 5090/Blackwell 等 Windows 用户需手动安装对应版本：
   ```powershell
-  # Windows + Python 3.13 + PyTorch 2.11 cu130 (Blackwell)
-  uv pip install triton-windows
+  # 示例：Windows + PyTorch 2.9+ cu130 (Blackwell)
+  uv pip install "triton-windows<3.7"
   uv pip install https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post4/sageattention-2.2.0+cu130torch2.9.0andhigher.post4-cp39-abi3-win_amd64.whl
   ```
+  > 其他 CUDA / PyTorch 组合请去 [SageAttention Releases](https://github.com/woct0rdho/SageAttention/releases) 页面查找对应的 `.whl`。
 - **移除强制 `empty_cache()`**：默认关闭，避免连续生成时反复分配显存，提升常驻服务吞吐量。
 - **分辨率 16 对齐**：自动生成前将宽高对齐到 16 的倍数，符合 Cosmos 架构要求。
 
