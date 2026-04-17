@@ -133,6 +133,84 @@ models/
 `uv run download_anima.py` 已经包含 tokenizer 下载，无需额外操作。
 如果 tokenizer 路径缺失或无效，服务启动时也会自动从远程下载（首次会多下载约 1.4 GB 的 Qwen3 模型权重作为副产品，之后缓存命中不再重复）。
 
+
+## 法典数据准备（可选，用于 `lookup_codex` 等 MCP 查询工具）
+
+服务内置了 3 个**只读**查询 MCP 工具，帮 AI 在一份庞大的 NovelAI tag 法典中快速
+定位「条目名 + tag 组合」，无需 GPU。详见 `AnimaImagineSkill/SKILL.md` §9.4。
+
+- `list_codex_sections` — 列粗章节（含每章条目数）
+- `list_codex_entries`  — 列某章节下的条目菜单（仅标题，省 token）
+- `lookup_codex`        — 按关键字 / 章节检索，返回「条目名 + tag 块」
+
+### 为什么默认没有法典数据？
+
+本仓库默认附带的法典文件**来自第三方作者（一般所长）整理的 NovelAI 个人法典**，
+属于版权物，**未经作者授权不随代码仓库分发**。仓库的 `.gitignore` 已将所有
+`法典-*.md` / `法典-*.json` / `*.docx` / `media_*/` 排除在提交之外。
+
+没有法典数据时，MCP 服务仍可正常生图，只是 `lookup_codex` 等查询工具加载 0 条，
+启动日志会打印 `[WARN] 未加载任何法典条目！`。
+
+### 我应该怎么获得法典数据？
+
+途径：
+    **自行准备**：联系法典作者取得 docx 源文件，按下面的「数据格式」章节自行构建。
+
+### 数据格式
+
+服务启动时会在以下候选路径按顺序寻找**第一个同时包含**下列清单的目录：
+
+```
+AnimaImagineSkill/references/
+├── 法典-常规.md              # 必需。若找不到此文件，整套 codex 工具不启用
+├── 法典-R18.md               # 可选。R18 法典，缺失时 scope="r18" 返回空
+├── 法典-常规-目录.json        # 粗章节索引（由 build_index.py 生成）
+├── 法典-常规-细目录.json      # 条目级索引（同上）
+├── 法典-R18-目录.json         # R18 粗目录（若有 R18 法典 md 则需要）
+└── 法典-R18-细目录.json       # R18 细目录
+```
+
+候选路径（按优先级）：
+
+1. 环境变量 `ANIMA_CODEX_DIR` 指向的绝对目录（推荐用于部署场景）
+2. `{cwd}/AnimaImagineSkill/references/`
+3. `{cwd}/references/`
+4. 包安装目录同级的 `AnimaImagineSkill/references/`
+
+找不到就静默跳过（生图功能不受影响）。
+
+### 自己从 docx 构建数据
+
+准备好两份 docx 后：
+
+```powershell
+# 需要先装 pandoc：https://pandoc.org/installing.html
+cd AnimaImagineSkill\references
+
+# 1) docx -> md
+pandoc "所长常规NovalAI个人法典（X.X.XX版，一般所长整理）.docx" `
+  -t gfm --wrap=none --extract-media=./media_normal -o "法典-常规.md"
+pandoc "所长色色NovalAI个人法典（X.X.XX版，一般所长整理）.docx" `
+  -t gfm --wrap=none --extract-media=./media_r18 -o "法典-R18.md"
+
+# 2) 生成粗 / 细目录
+python build_index.py
+```
+
+脚本的工作原理（便于二次定制）：
+
+- **粗目录** 扫描 pandoc 转出的 `<span id="_Toc..." class="anchor">` 锚点行，
+  这些锚点来自 docx 的 Heading 样式；每章附带 `end_line = 下一章 line - 1`。
+- **细目录** 在每个粗章节范围内启发式抓取「条目小标题行」：一行 ≤ 40 字，
+  至少含一个中文字符，不以 markdown 控制符开头，且下一行为空、再下一行像 tag 块
+  （含逗号 / `::` / `1girl` 等线索）。匹配到就记录行号 + 标题 + 所属章节。
+
+如果你的数据不是「所长法典」而是自定义内容，只要维持同样的 md 骨架（章节锚点 +
+`小标题 / 空行 / tag 行` 模式），用这套脚本就能直接出索引。
+
+---
+
 ---
 
 ## 配置
@@ -188,6 +266,7 @@ output:
 | `ANIMA_CLEAR_CUDA_CACHE` | `optimization.clear_cuda_cache` | `false` |
 | `ANIMA_T5XXL_TOKENIZER` | `tokenizer.t5xxl_path` | （空，自动下载） |
 | `ANIMA_OUTPUT_DIR` | `output.dir` | `./output` |
+| `ANIMA_CODEX_DIR` | （无） | （空，按候选路径自动寻址） |
 
 ---
 
@@ -237,6 +316,19 @@ python -m anima_imagine
 ### 3. 开始使用
 
 对 AI 说“画一个穿白裙的少女在花园里，竖屏 9:16”即可。
+
+### 4. MCP 工具清单
+
+| 工具 | 用途 |
+|---|---|
+| `generate_anima_image` | 结构化字段生图（推荐调用方式） |
+| `reroll_anima_image` | 基于历史图片参数重新生成 |
+| `list_codex_sections` | 列法典粗章节（带每章条目数） |
+| `list_codex_entries` | 列某章节下条目菜单（只有标题） |
+| `lookup_codex` | 按关键词 / 章节检索条目，返回「标题 + tag 块」 |
+
+后三个 codex 查询工具**仅在 `AnimaImagineSkill/references/` 下有法典数据时生效**，
+见上文「法典数据准备」一节。没有数据时只会返回空数组，不会影响生图。
 
 ---
 
@@ -294,7 +386,10 @@ AnimaImagineSkill/
 │   ├── SKILL.md              # 提示词工程师 Skill
 │   └── references/
 │       ├── artist-list.md    # 画师收藏
-│       └── prompt-examples.md
+│       ├── prompt-examples.md
+│       ├── build_index.py    # 法典目录构建脚本
+│       ├── 法典-*.md         # 法典正文（版权物，不提交，见「法典数据准备」）
+│       └── 法典-*-目录.json  # 目录 / 细目录（版权物，不提交）
 └── output/                   # 生成的图片（按日期分目录）
 ```
 

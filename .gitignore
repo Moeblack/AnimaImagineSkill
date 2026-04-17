@@ -47,6 +47,21 @@ SageAttention/
 # 临时脚本（benchmark、一次性测试）
 benchmark*.py
 generate_cat.py
+tests/_probe_*.py
+
+# =============================================================
+# 法典数据（版权物，禁止提交到公开仓库）
+# =============================================================
+# 源 docx 与转出的 md 全部忽略；生成的目录 / 细目录也一并忽略，
+# 因为它们直接嵌入法典原文的条目名和 tag。
+# 用户自行向作者索取授权后放入 AnimaImagineSkill/references/ 即可，
+# 格式见 README「法典数据准备」章节。
+AnimaImagineSkill/references/*.docx
+AnimaImagineSkill/references/法典-*.md
+AnimaImagineSkill/references/法典-*.json
+# 从 docx 抽取出来的图片资源
+AnimaImagineSkill/references/media_normal/
+AnimaImagineSkill/references/media_r18/
 
 # Junction / 临时文件 / 工作流缓存
 comfyui-main

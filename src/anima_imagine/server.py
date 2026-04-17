@@ -29,6 +29,7 @@ from anima_imagine.pipeline import AnimaPipeline
 from anima_imagine.storage import ImageStorage
 from anima_imagine.resolution import resolve_size
 from anima_imagine.config import load_config, Config
+from anima_imagine.codex import CodexIndex, resolve_codex_dir
 
 # ============================================================
 # 配置：config.yaml > 环境变量 > 默认值
@@ -44,6 +45,24 @@ pipeline = AnimaPipeline(cfg=cfg)
 
 # gallery.html 所在目录（和本文件同级）
 _HERE = Path(__file__).resolve().parent
+
+# 法典索引：给 AI 一次调用就能查到「条目名 + tag 块」。
+# 路径解析按优先级尝试多个候选，找到第一个「装着法典-常规.md」的目录就用：
+#   1. 环境变量 ANIMA_CODEX_DIR（显式配置）
+#   2. 当前工作目录下的 AnimaImagineSkill/references（从仓库根启动时）
+#   3. 当前工作目录下的 references（从 AnimaImagineSkill 子目录启动时）
+#   4. _HERE.parents[1] / AnimaImagineSkill / references（pip 装到 site-packages 时）
+#   5. _HERE.parents[2] / AnimaImagineSkill / references（仓库名嵌套场景，兼容旧布局）
+# 这么做是因为旧版写死 parents[2] 在客户端实际启动环境下常算不对，却只会静默加载 0 条。
+_CWD = Path.cwd()
+_CODEX_DIR = resolve_codex_dir([
+    os.getenv("ANIMA_CODEX_DIR"),
+    _CWD / "AnimaImagineSkill" / "references",
+    _CWD / "references",
+    _HERE.parents[1] / "AnimaImagineSkill" / "references",
+    _HERE.parents[2] / "AnimaImagineSkill" / "references" if len(_HERE.parents) >= 3 else None,
+])
+codex = CodexIndex(_CODEX_DIR if _CODEX_DIR else _CWD)
 
 
 # ============================================================
@@ -207,6 +226,77 @@ async def reroll_anima_image(
 
 
 # ============================================================
+# MCP 工具 3：法典查询（只读，不依赖 GPU）
+#
+# 解决之前的痛点：AI 要经历「search_in_files 找行号 → read_file 读 tag」
+# 两轮 shell，现在一次 lookup_codex 直接拿到条目名 + 正文 tag 块。
+# ============================================================
+@mcp.tool()
+async def lookup_codex(
+    query: str,
+    section: str = "",
+    scope: str = "normal",
+    limit: int = 20,
+    context_lines: int = 3,
+) -> list:
+    """在法典中检索条目，一次返回「标题 + tag 块」，无需手动 search + read。
+
+    参数：
+        query: 关键词子串，中文/英文均可，大小写不敏感。同时在标题和条目 tag 中搜。
+            传空字符串 + 指定 ``section`` 表示「把该章节的条目整块拉出来」。
+        section: 按粗章节名过滤，子串匹配，大小写不敏感；可用 ``,`` / ``|`` 分隔多个，
+            例如 ``"内衣,睡衣,诱惑"``。对「性感服装」「色情服装」这种没有统一关键词
+            的抽象需求，强烈建议先用 ``list_codex_sections`` 看章节名，再走 section 路径。
+        scope: "normal"（默认）/ "r18" / "both"。未经用户明示前不要切到 r18。
+        limit: 默认 20。要把整章拉下来可调大，但别超过 200。
+        context_lines: 每条返回几行原文，默认 3。
+
+    返回：JSON，每条含 source / scope / section / title / line / tag_block。
+    """
+    hits = codex.lookup(
+        query=query, section=section,
+        scope=scope, limit=limit, context_lines=context_lines,
+    )
+    return [TextContent(type="text", text=json.dumps(hits, ensure_ascii=False, indent=2))]
+
+
+@mcp.tool()
+async def list_codex_sections(scope: str = "normal") -> list:
+    """返回法典的粗章节列表：章节名 + entry_count + 起止行。
+
+    用于「先逛目录」。想做「各种色情服装/各种姿势」这类模糊需求时，先调这个工具看
+    R18 章节（内衣 / 睡衣 / 诱惑 / 幻想改造 / 日常改造 / 露出…），再用
+    ``lookup_codex(section=..., query="")`` 或 ``list_codex_entries(section=...)`` 展开。
+    """
+    secs = codex.list_sections(scope=scope)
+    return [TextContent(type="text", text=json.dumps(secs, ensure_ascii=False, indent=2))]
+
+
+@mcp.tool()
+async def list_codex_entries(
+    section: str = "",
+    scope: str = "normal",
+    limit: int = 200,
+) -> list:
+    """列出指定章节下所有条目的「标题菜单」（不带 tag 正文，token 友好）。
+
+    处理「某大类下有哪些玩法/变体」的问题：先用 list_codex_sections 看大类，
+    再用本工具拿到该大类的条目列表，最后用 lookup_codex 按选中的标题拿 tag。
+
+    参数：
+        section: 章节名子串，可用 ``,`` / ``|`` 分隔多选。留空表示列出 scope 下所有条目
+            （受 limit 截断，慎用）。
+        scope: 同 lookup_codex。
+        limit: 默认 200，足以覆盖绝大多数章节。
+
+    返回：JSON 列表，每项含 source / scope / section / title / line。
+    """
+    entries = codex.list_entries(section=section, scope=scope, limit=limit)
+    return [TextContent(type="text", text=json.dumps(entries, ensure_ascii=False, indent=2))]
+
+
+
+# ============================================================
 # 画廊路由：网页 + API
 # ============================================================
 
@@ -268,6 +358,56 @@ async def serve_image(request: Request):
     return Response(content=full_path.read_bytes(), media_type=media_type)
 
 
+@mcp.custom_route("/api/generate", methods=["POST"])
+async def api_generate(request: Request):
+    """前端生图 API"""
+    data = await request.json()
+    
+    # 判断是否为高级模式
+    is_advanced = data.get("mode") == "advanced"
+    
+    if is_advanced:
+        prompt = build_prompt(
+            quality_meta_year_safe=data.get("quality_meta_year_safe", "masterpiece, best quality, newest, year 2025, safe"),
+            count=data.get("count", "1girl"),
+            character=data.get("character", ""),
+            series=data.get("series", ""),
+            appearance=data.get("appearance", ""),
+            artist=data.get("artist", ""),
+            style=data.get("style", ""),
+            tags=data.get("tags", ""),
+            nltags=data.get("nltags", ""),
+            environment=data.get("environment", "")
+        )
+    else:
+        # 基础模式或直接导入 json
+        prompt = data.get("prompt", "")
+
+    neg = data.get("negative_prompt", _DEFAULT_NEG)
+    seed = int(data.get("seed", -1))
+    steps = int(data.get("steps", 20))
+    aspect_ratio = data.get("aspect_ratio", "3:4")
+    width = int(data.get("width", 0))
+    height = int(data.get("height", 0))
+    cfg_scale = float(data.get("cfg_scale", 4.5))
+
+    w, h = resolve_size(aspect_ratio, width, height)
+
+    image, actual_seed, gen_time = await pipeline.generate(
+        prompt=prompt, negative_prompt=neg,
+        width=w, height=h, steps=steps, seed=seed, cfg_scale=cfg_scale,
+    )
+
+    saved = storage.save(image, {
+        "prompt": prompt, "negative_prompt": neg,
+        "seed": actual_seed, "steps": steps,
+        "width": w, "height": h,
+        "cfg_scale": cfg_scale, "aspect_ratio": aspect_ratio,
+        "generation_time": round(gen_time, 2),
+    })
+
+    return JSONResponse({"status": "ok", "meta": saved["meta"]})
+
 @mcp.custom_route("/health", methods=["GET"])
 async def health(request: Request):
     """健康检查。"""
@@ -276,6 +416,7 @@ async def health(request: Request):
         "model_loaded": pipeline.pipe is not None,
         "output_dir": str(Path(cfg.output_dir).resolve()),
         "device": cfg.device,
+        "codex": codex.stats(),
     })
 
 
@@ -299,6 +440,19 @@ def main():
     print(f"  Gallery      : http://{cfg.host}:{cfg.port}/")
     print(f"  Health       : http://{cfg.host}:{cfg.port}/health")
     print(f"  Output Dir   : {Path(cfg.output_dir).resolve()}")
+
+    # 打印 codex 加载结果。空加载是静默失败的常见根因，
+    # 之前的 bug 就是因为路径算错却没日志提示，AI 调用 lookup_codex 拿到 []。
+    stats = codex.stats()
+    if stats["fine_entries"] == 0:
+        print(f"  Codex        : [WARN] 未加载任何法典条目！")
+        print(f"                 候选路径尝试失败，当前 _CODEX_DIR={_CODEX_DIR!s}")
+        print(f"                 cwd={_CWD!s}")
+        print(f"                 可设置环境变量 ANIMA_CODEX_DIR 指向 references 目录")
+    else:
+        print(f"  Codex        : {stats['fine_entries']} entries, "
+              f"{stats['sections']} sections, from {_CODEX_DIR}")
+
     print()
 
     # 启动 Streamable HTTP MCP 服务

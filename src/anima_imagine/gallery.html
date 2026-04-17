@@ -43,6 +43,104 @@ body {
   margin-left: auto; font-size: 12px; color: #888;
 }
 
+/* 生图面板按钮 */
+.toggle-generator {
+  background: #2a2a44;
+  border: 1px solid #3a3a5c;
+  color: #e0e0e8;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.toggle-generator:hover {
+  background: #3a3a5c;
+}
+
+/* --- 控制面板 --- */
+.generator-panel {
+  background: #1e1e38;
+  border-bottom: 1px solid #2a2a44;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.generator-panel textarea, .generator-panel input {
+  background: #0f0f1a;
+  border: 1px solid #3a3a5c;
+  color: #e0e0e8;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 13px;
+  width: 100%;
+}
+
+.generator-panel .row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.generator-panel .col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 200px;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+.tabs button {
+  background: #2a2a44;
+  border: none;
+  color: #e0e0e8;
+  padding: 6px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.tabs button.active {
+  background: linear-gradient(135deg, #a78bfa, #60a5fa);
+  color: #fff;
+  font-weight: bold;
+}
+
+.common-params {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.common-params label {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.common-params input {
+  width: 80px;
+}
+
+#generateBtn {
+  background: linear-gradient(135deg, #a78bfa, #60a5fa);
+  border: none;
+  color: #fff;
+  padding: 10px 24px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: bold;
+  align-self: flex-start;
+  transition: opacity 0.2s;
+}
+#generateBtn:hover { opacity: 0.9; }
+#generateBtn:disabled { filter: grayscale(1); cursor: not-allowed; }
+
 /* --- 瀑布流网格（CSS columns） --- */
 .masonry {
   column-width: 280px; /* 响应式核心：设置最小列宽，浏览器自动计算列数 */
@@ -62,9 +160,19 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.05);
   border-radius: 12px;
   overflow: hidden;
-  transition: transform .2s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform .2s cubic-bezier(0.4, 0, 0.2,1);
 }
 .card:hover { transform: translateY(-4px); box-shadow: 0 10px 20px rgba(0,0,0,0.3); }
+
+/* 闪黑动画 */
+@keyframes flashBlack {
+  0% { filter: brightness(0); transform: scale(0.95); opacity: 0; }
+  20% { opacity: 1; filter: brightness(0); }
+  100% { filter: brightness(1); transform: scale(1); }
+}
+.card.flash {
+  animation: flashBlack 0.8s ease-out forwards;
+}
 
 .card img {
   width: 100%; display: block; cursor: pointer;
@@ -132,11 +240,69 @@ body {
 
 <div class="header">
   <h1>✨ AnimaImagine Gallery</h1>
+  <button class="toggle-generator" onclick="toggleGenerator()">生图面板</button>
   <select id="datePicker">
     <option value="">全部日期</option>
   </select>
   <input id="tagFilter" type="text" placeholder="输入标签过滤..." />
   <span class="stats" id="stats"></span>
+</div>
+
+<div class="generator-panel" id="generatorPanel" style="display: none;">
+  <div class="tabs">
+    <button id="tabBasic" class="active" onclick="switchTab('basic')">基础模式</button>
+    <button id="tabAdvanced" onclick="switchTab('advanced')">高级模式</button>
+    <div style="margin-left: 12px; font-size: 12px; color: #a78bfa;">导入 JSON 格式: </div>
+    <input type="file" id="jsonUpload" accept=".json" style="width: auto; background: transparent; border: none; padding: 0;" />
+  </div>
+
+  <!-- 基础模式 -->
+  <div id="modeBasic" class="row">
+    <div class="col">
+      <!-- 这里将 prompt 分成两行输入是为了符合习惯 -->
+      <textarea id="basicPrompt" placeholder="Prompt..." rows="3"></textarea>
+    </div>
+  </div>
+
+  <!-- 高级模式 -->
+  <div id="modeAdvanced" class="row" style="display: none;">
+    <div class="col">
+      <input id="advQuality" placeholder="quality_meta_year_safe" value="masterpiece, best quality, newest, year 2025, safe" />
+      <input id="advCount" placeholder="count (e.g. 1girl)" value="1girl" />
+      <input id="advCharacter" placeholder="character" />
+      <input id="advSeries" placeholder="series" />
+    </div>
+    <div class="col">
+      <input id="advAppearance" placeholder="appearance" />
+      <input id="advArtist" placeholder="artist" />
+      <input id="advStyle" placeholder="style" />
+      <input id="advTags" placeholder="tags" />
+    </div>
+    <div class="col">
+      <input id="advNltags" placeholder="nltags" />
+      <input id="advEnvironment" placeholder="environment" />
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="col">
+      <textarea id="negPrompt" placeholder="Negative Prompt..." rows="2">worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia, bad hands, bad anatomy, extra fingers, missing fingers, anatomical nonsense</textarea>
+    </div>
+  </div>
+
+  <div class="common-params">
+    <label>Seed: <input type="number" id="paramSeed" value="-1" /></label>
+    <label>Steps: <input type="number" id="paramSteps" value="20" /></label>
+    <label>CFG: <input type="number" step="0.1" id="paramCfg" value="4.5" /></label>
+    <label>Aspect Ratio: <input type="text" id="paramRatio" value="3:4" placeholder="3:4" /></label>
+    <label>Width: <input type="number" id="paramWidth" value="0" /></label>
+    <label>Height: <input type="number" id="paramHeight" value="0" /></label>
+  </div>
+
+  <div style="display: flex; gap: 16px; align-items: center;">
+    <button id="generateBtn" onclick="doGenerate()">生成图片</button>
+    <div id="genStatus" style="font-size: 13px; color: #a78bfa;"></div>
+  </div>
 </div>
 
 <div class="masonry" id="gallery"></div>
@@ -148,7 +314,6 @@ body {
 <script>
 /* ============================================================
    画廊前端逻辑。
-   从 /api/images 拉取数据，渲染卡片，支持日期筛选 + 标签过滤。
    ============================================================ */
 
 const gallery  = document.getElementById('gallery');
@@ -160,6 +325,99 @@ const lightboxImg = document.getElementById('lightboxImg');
 
 let allImages = [];  // 全量元数据缓存
 let lastJsonString = ""; // 用于检测数据是否变化
+let currentMode = 'basic'; // 'basic' | 'advanced'
+
+// --- 生图面板相关 ---
+function toggleGenerator() {
+  const panel = document.getElementById('generatorPanel');
+  panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+}
+
+function switchTab(mode) {
+  currentMode = mode;
+  document.getElementById('tabBasic').classList.toggle('active', mode === 'basic');
+  document.getElementById('tabAdvanced').classList.toggle('active', mode === 'advanced');
+  document.getElementById('modeBasic').style.display = mode === 'basic' ? 'flex' : 'none';
+  document.getElementById('modeAdvanced').style.display = mode === 'advanced' ? 'flex' : 'none';
+}
+
+document.getElementById('jsonUpload').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = evt => {
+    try {
+      const data = JSON.parse(evt.target.result);
+      if (data.prompt) document.getElementById('basicPrompt').value = data.prompt;
+      if (data.negative_prompt) document.getElementById('negPrompt').value = data.negative_prompt;
+      if (data.seed !== undefined) document.getElementById('paramSeed').value = data.seed;
+      if (data.steps !== undefined) document.getElementById('paramSteps').value = data.steps;
+      if (data.cfg_scale !== undefined) document.getElementById('paramCfg').value = data.cfg_scale;
+      if (data.aspect_ratio) document.getElementById('paramRatio').value = data.aspect_ratio;
+      if (data.width !== undefined) document.getElementById('paramWidth').value = data.width;
+      if (data.height !== undefined) document.getElementById('paramHeight').value = data.height;
+      
+      switchTab('basic');
+    } catch(err) {
+      alert("解析 JSON 失败: " + err.message);
+    }
+  };
+  reader.readAsText(file);
+});
+
+async function doGenerate() {
+  const btn = document.getElementById('generateBtn');
+  const statusEl = document.getElementById('genStatus');
+  
+  const payload = {
+    mode: currentMode,
+    negative_prompt: document.getElementById('negPrompt').value,
+    seed: parseInt(document.getElementById('paramSeed').value),
+    steps: parseInt(document.getElementById('paramSteps').value),
+    cfg_scale: parseFloat(document.getElementById('paramCfg').value),
+    aspect_ratio: document.getElementById('paramRatio').value,
+    width: parseInt(document.getElementById('paramWidth').value),
+    height: parseInt(document.getElementById('paramHeight').value),
+  };
+  
+  if (currentMode === 'basic') {
+    payload.prompt = document.getElementById('basicPrompt').value;
+  } else {
+    payload.quality_meta_year_safe = document.getElementById('advQuality').value;
+    payload.count = document.getElementById('advCount').value;
+    payload.character = document.getElementById('advCharacter').value;
+    payload.series = document.getElementById('advSeries').value;
+    payload.appearance = document.getElementById('advAppearance').value;
+    payload.artist = document.getElementById('advArtist').value;
+    payload.style = document.getElementById('advStyle').value;
+    payload.tags = document.getElementById('advTags').value;
+    payload.nltags = document.getElementById('advNltags').value;
+    payload.environment = document.getElementById('advEnvironment').value;
+  }
+  
+  btn.disabled = true;
+  statusEl.textContent = "正在生成，请耐心等待...";
+  
+  try {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (res.ok && data.status === "ok") {
+      statusEl.textContent = `生成完成！耗时 ${data.meta.generation_time}s`;
+      setTimeout(() => { statusEl.textContent = ""; }, 5000);
+      loadData(); // 立即获取新图
+    } else {
+      statusEl.textContent = "生成失败: " + JSON.stringify(data);
+    }
+  } catch (err) {
+    statusEl.textContent = "请求错误: " + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+}
 
 // --- 标签分类规则 ---
 function tagClass(tag) {
@@ -174,7 +432,7 @@ function tagClass(tag) {
 }
 
 // --- 渲染单张卡片 ---
-function renderCard(img) {
+function renderCard(img, isFlash = false) {
   const date = img.date || '';
   const fn   = img.filename || '';
   const relPath = `${date}/${fn}`;
@@ -189,7 +447,7 @@ function renderCard(img) {
   ).join('');
 
   return `
-    <div class="card">
+    <div class="card ${isFlash ? 'flash' : ''}">
       <img src="${thumbUrl}" alt="" loading="lazy"
            onclick="openLightbox('${fullUrl}')" />
       <div class="info">
@@ -208,23 +466,42 @@ function renderCard(img) {
 // --- 渲染全部卡片 ---
 function renderAll(images) {
   if (images.length === 0) {
-    gallery.innerHTML = '<div class="empty">还没有图片。通过 MCP 工具调用 generate_anima_image 开始生成吧！</div>';
+    gallery.innerHTML = '<div class="empty">还没有图片，快去生图面板生成吧！</div>';
   } else {
-    gallery.innerHTML = images.map(renderCard).join('');
+    gallery.innerHTML = images.map(i => renderCard(i, false)).join('');
   }
   statsEl.textContent = `${images.length} 张图片`;
 }
 
 // --- 过滤逻辑 ---
-function applyFilter() {
+// 如果传入 addedImages，则采用增量插入模式，只前插新图片
+function applyFilter(addedImages = null) {
   const date = datePicker.value;
   const kw = tagFilter.value.trim().toLowerCase();
-  let filtered = allImages;
-  if (date) filtered = filtered.filter(i => i.date === date);
-  if (kw) filtered = filtered.filter(i =>
-    (i.tags || []).some(t => t.toLowerCase().includes(kw))
-  );
-  renderAll(filtered);
+  
+  if (addedImages) {
+    let filteredNew = addedImages;
+    if (date) filteredNew = filteredNew.filter(i => i.date === date);
+    if (kw) filteredNew = filteredNew.filter(i =>
+      (i.tags || []).some(t => t.toLowerCase().includes(kw))
+    );
+    if (filteredNew.length > 0) {
+      const empty = gallery.querySelector('.empty');
+      if (empty) empty.remove();
+      
+      // 反转一下让最新的保持在最前面
+      const newHtmls = filteredNew.reverse().map(i => renderCard(i, true)).join('');
+      gallery.insertAdjacentHTML('afterbegin', newHtmls);
+    }
+    statsEl.textContent = `${allImages.length} 张图片`;
+  } else {
+    let filtered = allImages;
+    if (date) filtered = filtered.filter(i => i.date === date);
+    if (kw) filtered = filtered.filter(i =>
+      (i.tags || []).some(t => t.toLowerCase().includes(kw))
+    );
+    renderAll(filtered);
+  }
 }
 
 // 点击标签快速过滤
@@ -257,12 +534,15 @@ async function loadData() {
     const resp = await fetch('/api/images');
     const data = await resp.json();
 
-    // 性能优化：只有当数据真正变化时才更新 DOM，防止 30s 自动刷新导致的闪烁
     const currentJsonString = JSON.stringify(data.images);
     if (currentJsonString === lastJsonString) return;
     
+    const newImages = data.images || [];
+    const oldSet = new Set(allImages.map(i => i.filename));
+    const addedImages = newImages.filter(i => !oldSet.has(i.filename));
+    
     lastJsonString = currentJsonString;
-    allImages = data.images || [];
+    allImages = newImages;
 
     // 填充日期选择器
     const dates = data.dates || [];
@@ -272,19 +552,26 @@ async function loadData() {
     // 保持用户当前的筛选状态
     datePicker.value = currentPickerVal;
 
-    applyFilter();
+    // 判断是全量更新还是增量闪黑前插
+    if (oldSet.size === 0 || addedImages.length === 0 || addedImages.length > 50) {
+      applyFilter();
+    } else {
+      applyFilter(addedImages);
+    }
   } catch (err) {
-    gallery.innerHTML = `<div class="empty">加载失败: ${err.message}</div>`;
+    if (allImages.length === 0) {
+      gallery.innerHTML = `<div class="empty">加载失败: ${err.message}</div>`;
+    }
   }
 }
 
-datePicker.addEventListener('change', applyFilter);
-tagFilter.addEventListener('input', applyFilter);
+datePicker.addEventListener('change', () => applyFilter());
+tagFilter.addEventListener('input', () => applyFilter());
 
 // 页面加载时拉取数据
 loadData();
 
-// 每 30 秒自动刷新（新图会自动出现）
+// 每 30 秒自动刷新（新图会自动增量出现）
 setInterval(loadData, 30000);
 </script>
 </body>

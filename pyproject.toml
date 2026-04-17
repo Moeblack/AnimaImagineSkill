@@ -67,20 +67,20 @@ anima_imagine = ["*.html"]
 # ============================================================
 # PyTorch CUDA 版本配置（uv sync 时生效）
 #
-# 默认使用南京大学镜像（国内直连，速度快）。
-# RTX 5090 (Blackwell) 用户请改为 cu130：
-#   url = "https://mirror.nju.edu.cn/pytorch/whl/cu130/"
+# 默认使用南京大学镜像 cu130（Blackwell / RTX 50xx 系列）。
+# Ampere / Ada Lovelace (RTX 30xx/40xx) 用户可改回 cu124：
+#   url = "https://mirror.nju.edu.cn/pytorch/whl/cu124/"
 #
 # 海外用户可换回 PyTorch 官方源：
-#   url = "https://download.pytorch.org/whl/cu124/"
 #   url = "https://download.pytorch.org/whl/cu130/"
+#   url = "https://download.pytorch.org/whl/cu124/"
 # ============================================================
 
-# PyTorch CUDA 专属源（默认南京大学镜像，国内直连无需代理）
+# PyTorch CUDA 专属源（南京大学镜像 cu130，适配 Blackwell / CUDA 13.x）
 # explicit = true 确保只有下方声明的包才走此 index。
 [[tool.uv.index]]
 name = "pytorch"
-url = "https://mirror.nju.edu.cn/pytorch/whl/cu124/"
+url = "https://mirror.nju.edu.cn/pytorch/whl/cu130/"
 explicit = true
 
 # 指定 torch 系列包走 CUDA 专属源
