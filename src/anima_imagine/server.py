@@ -483,6 +483,37 @@ async def api_login(request: Request):
 # 画廊路由：网页 + API
 # ============================================================
 
+# ============================================================
+# 静态文件路由（Phase 1.2: JS/CSS/CSV 等静态资源）
+# ============================================================
+# 将 src/anima_imagine/static/ 目录下的文件通过 /static/ URL 提供。
+# 受 SecurityMiddleware 保护（非白名单路径），和 /api/ 同等待遇。
+
+import mimetypes
+
+@mcp.custom_route("/static/{path:path}", methods=["GET"])
+async def serve_static(request: Request):
+    """提供静态文件服务（JS/CSS/CSV 等）。"""
+    rel_path = request.path_params.get("path", "")
+    full_path = _HERE / "static" / rel_path
+
+    # 安全检查：禁止路径穿越
+    try:
+        full_path.resolve().relative_to((_HERE / "static").resolve())
+    except ValueError:
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+
+    if not full_path.exists() or not full_path.is_file():
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    # 根据后缀推断 MIME 类型
+    media_type, _ = mimetypes.guess_type(str(full_path))
+    if media_type is None:
+        media_type = "application/octet-stream"
+
+    return Response(content=full_path.read_bytes(), media_type=media_type)
+
+
 @mcp.custom_route("/", methods=["GET"])
 async def gallery_page(request: Request):
     """返回画廊 HTML 页面。"""
@@ -590,6 +621,98 @@ async def api_generate(request: Request):
     })
 
     return JSONResponse({"status": "ok", "meta": saved["meta"]})
+
+# ============================================================
+# Phase 3.1: 收藏 API
+# ============================================================
+
+@mcp.custom_route("/api/image/favorite", methods=["POST"])
+async def api_favorite(request: Request):
+    """切换图片的收藏状态。
+
+    请求体: {"path": "2026-04-15/140703_636473557.png", "favorited": true}
+    将 favorited 字段写入图片的元数据 JSON 文件中。
+    """
+    data = await request.json()
+    rel_path = data.get("path", "")
+    favorited = data.get("favorited", False)
+
+    if not rel_path:
+        return JSONResponse({"error": "missing path"}, status_code=400)
+
+    # 找到对应的元数据 JSON 文件并更新
+    # 元数据 JSON 与图片同名，后缀改为 .json
+    img_full = Path(cfg.output_dir) / rel_path
+    json_path = img_full.with_suffix(".json")
+
+    # 安全检查：禁止路径穿越
+    try:
+        img_full.resolve().relative_to(Path(cfg.output_dir).resolve())
+    except ValueError:
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+
+    if not json_path.exists():
+        return JSONResponse({"error": "metadata not found"}, status_code=404)
+
+    try:
+        meta = json.loads(json_path.read_text(encoding="utf-8"))
+        meta["favorited"] = favorited
+        json_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        return JSONResponse({"status": "ok", "favorited": favorited})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ============================================================
+# Phase 4.2: 批量删除 API（标记删除，非物理删除）
+# ============================================================
+
+@mcp.custom_route("/api/image/delete", methods=["POST"])
+async def api_delete(request: Request):
+    """删除图片（移动到 .trash/ 子目录）。
+
+    请求体: {"path": "2026-04-15/140703_636473557.png"}
+    或批量: {"paths": ["...", "..."]}
+    """
+    data = await request.json()
+    paths = data.get("paths", [])
+    if not paths and data.get("path"):
+        paths = [data["path"]]
+
+    deleted = []
+    for rel_path in paths:
+        img_full = Path(cfg.output_dir) / rel_path
+        try:
+            img_full.resolve().relative_to(Path(cfg.output_dir).resolve())
+        except ValueError:
+            continue
+
+        if not img_full.exists():
+            continue
+
+        # 移动到 .trash/ 目录（保留日期子目录结构）
+        trash_dir = Path(cfg.output_dir) / ".trash" / rel_path.rsplit("/", 1)[0] if "/" in rel_path else Path(cfg.output_dir) / ".trash"
+        trash_dir.mkdir(parents=True, exist_ok=True)
+        trash_path = trash_dir / img_full.name
+        img_full.rename(trash_path)
+
+        # 同时移动元数据和缩略图
+        json_path = img_full.with_suffix(".json")
+        if json_path.exists():
+            json_path.rename(trash_dir / json_path.name)
+
+        # 缩略图在 thumbs/ 子目录
+        thumb_dir = img_full.parent / "thumbs"
+        thumb_path = thumb_dir / img_full.name.replace(".png", ".jpg")
+        if thumb_path.exists():
+            trash_thumbs = trash_dir / "thumbs"
+            trash_thumbs.mkdir(parents=True, exist_ok=True)
+            thumb_path.rename(trash_thumbs / thumb_path.name)
+
+        deleted.append(rel_path)
+
+    return JSONResponse({"status": "ok", "deleted": deleted, "count": len(deleted)})
+
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health(request: Request):

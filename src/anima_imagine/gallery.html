@@ -4,262 +4,51 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AnimaImagine Gallery</title>
-<style>
-/* ============================================================
-   暗色主题画廊，CSS columns 实现瀑布流布局。
-   不依赖任何框架，自包含 HTML/CSS/JS。
-   ============================================================ */
-* { margin: 0; padding: 0; box-sizing: border-box; }
-
-body {
-  background: #0f0f1a;
-  color: #e0e0e8;
-  font-family: -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
-  min-height: 100vh;
-}
-
-/* --- 顶部导航 --- */
-.header {
-  position: sticky; top: 0; z-index: 100;
-  background: #16162a;
-  border-bottom: 1px solid #2a2a44;
-  padding: 12px 20px;
-  display: flex; align-items: center; gap: 16px;
-  flex-wrap: wrap;
-}
-.header h1 {
-  font-size: 18px; font-weight: 600;
-  background: linear-gradient(135deg, #a78bfa, #60a5fa);
-  /* 渐变文字效果：需要同时写标准属性和 -webkit- 前缀以兼容各浏览器 */
-  background-clip: text; -webkit-background-clip: text;
-  color: transparent; -webkit-text-fill-color: transparent;
-}
-.header select, .header input {
-  background: #1e1e38; color: #e0e0e8;
-  border: 1px solid #3a3a5c; border-radius: 6px;
-  padding: 6px 10px; font-size: 13px;
-}
-.header .stats {
-  margin-left: auto; font-size: 12px; color: #888;
-}
-
-/* 生图面板按钮 */
-.toggle-generator {
-  background: #2a2a44;
-  border: 1px solid #3a3a5c;
-  color: #e0e0e8;
-  padding: 6px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-}
-.toggle-generator:hover {
-  background: #3a3a5c;
-}
-
-/* --- 控制面板 --- */
-.generator-panel {
-  background: #1e1e38;
-  border-bottom: 1px solid #2a2a44;
-  padding: 16px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.generator-panel textarea, .generator-panel input {
-  background: #0f0f1a;
-  border: 1px solid #3a3a5c;
-  color: #e0e0e8;
-  border-radius: 6px;
-  padding: 8px;
-  font-size: 13px;
-  width: 100%;
-}
-
-.generator-panel .row {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.generator-panel .col {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-width: 200px;
-}
-
-.tabs {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-  align-items: center;
-}
-.tabs button {
-  background: #2a2a44;
-  border: none;
-  color: #e0e0e8;
-  padding: 6px 16px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-.tabs button.active {
-  background: linear-gradient(135deg, #a78bfa, #60a5fa);
-  color: #fff;
-  font-weight: bold;
-}
-
-.common-params {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-.common-params label {
-  font-size: 12px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.common-params input {
-  width: 80px;
-}
-
-#generateBtn {
-  background: linear-gradient(135deg, #a78bfa, #60a5fa);
-  border: none;
-  color: #fff;
-  padding: 10px 24px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-weight: bold;
-  align-self: flex-start;
-  transition: opacity 0.2s;
-}
-#generateBtn:hover { opacity: 0.9; }
-#generateBtn:disabled { filter: grayscale(1); cursor: not-allowed; }
-
-/* --- 瀑布流网格（CSS columns） --- */
-.masonry {
-  column-width: 280px; /* 响应式核心：设置最小列宽，浏览器自动计算列数 */
-  column-gap: 16px;
-  padding: 20px;
-  width: 100%;
-  max-width: 1800px;
-  margin: 0 auto;
-}
-
-/* --- 卡片 --- */
-.card {
-  break-inside: avoid;
-  margin-bottom: 16px;
-  background: rgba(26, 26, 48, 0.6);
-  backdrop-filter: blur(10px); /* 增加毛玻璃质感 */
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 12px;
-  overflow: hidden;
-  transition: transform .2s cubic-bezier(0.4, 0, 0.2,1);
-}
-.card:hover { transform: translateY(-4px); box-shadow: 0 10px 20px rgba(0,0,0,0.3); }
-
-/* 闪黑动画 */
-@keyframes flashBlack {
-  0% { filter: brightness(0); transform: scale(0.95); opacity: 0; }
-  20% { opacity: 1; filter: brightness(0); }
-  100% { filter: brightness(1); transform: scale(1); }
-}
-.card.flash {
-  animation: flashBlack 0.8s ease-out forwards;
-}
-
-.card img {
-  width: 100%; display: block; cursor: pointer;
-  /* 加载前显示占位色 */
-  background: #252545;
-  min-height: 80px;
-}
-
-.card .info {
-  padding: 8px 10px;
-}
-
-/* --- 标签 --- */
-.tags {
-  display: flex; flex-wrap: wrap; gap: 4px;
-  margin-bottom: 6px;
-}
-.tag {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 3px;
-  font-size: 11px;
-  line-height: 18px;
-  background: #2a2a48;
-  color: #b0b0c8;
-  cursor: pointer;
-  white-space: nowrap;
-}
-/* 特殊标签配色 */
-.tag.artist   { background: #3b1f6e; color: #c4a8ff; }   /* 画师: 紫 */
-.tag.quality  { background: #5c4a0e; color: #ffd866; }   /* 质量: 金 */
-.tag.safety   { background: #0e4a2a; color: #6ee7a0; }   /* 安全: 绿 */
-.tag.nsfw     { background: #5c0e1a; color: #ff8a9e; }   /* NSFW: 红 */
-.tag.score    { background: #0e3a5c; color: #7ec8ff; }   /* 分数: 蓝 */
-.tag.count    { background: #2e4a3a; color: #a0d8b8; }   /* 人数: 青 */
-
-.meta-line {
-  font-size: 11px; color: #666;
-  display: flex; gap: 8px; flex-wrap: wrap;
-}
-
-/* --- Lightbox --- */
-.lightbox {
-  display: none;
-  position: fixed; inset: 0; z-index: 200;
-  background: rgba(0,0,0,.92);
-  justify-content: center; align-items: center;
-  cursor: zoom-out;
-}
-.lightbox.active { display: flex; }
-.lightbox img {
-  max-width: 95vw; max-height: 95vh;
-  object-fit: contain;
-  border-radius: 4px;
-}
-
-/* --- 加载/空状态 --- */
-.loading, .empty {
-  text-align: center; padding: 60px 20px;
-  color: #666; font-size: 14px;
-}
-</style>
+<link rel="stylesheet" href="/static/css/gallery.css">
 </head>
 <body>
 
+<!-- ============================================================
+     选择模式工具栏（Phase 4: 批量操作时替代 header）
+     ============================================================ -->
+<div class="select-toolbar" id="selectToolbar">
+  <button class="sel-close" id="selClose">✕</button>
+  <span class="sel-count" id="selCount">已选 0 张</span>
+  <button id="selAll">全选</button>
+  <button id="selDownload">⬇ 下载</button>
+  <button id="selCopy">📋 复制</button>
+  <button id="selDelete">🗑 删除</button>
+</div>
+
+<!-- ============================================================
+     顶部导航
+     ============================================================ -->
 <div class="header">
   <h1>✨ AnimaImagine Gallery</h1>
-  <button class="toggle-generator" onclick="toggleGenerator()">生图面板</button>
+  <button class="toggle-generator" id="toggleGenerator">生图面板</button>
+  <button class="toggle-generator" id="enterSelectMode">☑ 选择</button>
   <select id="datePicker">
     <option value="">全部日期</option>
   </select>
   <input id="tagFilter" type="text" placeholder="输入标签过滤..." />
+  <select id="promptHistory"><option value="">📜 历史记录</option></select>
   <span class="stats" id="stats"></span>
 </div>
 
+<!-- ============================================================
+     生图面板
+     ============================================================ -->
 <div class="generator-panel" id="generatorPanel" style="display: none;">
   <div class="tabs">
-    <button id="tabBasic" class="active" onclick="switchTab('basic')">基础模式</button>
-    <button id="tabAdvanced" onclick="switchTab('advanced')">高级模式</button>
-    <div style="margin-left: 12px; font-size: 12px; color: #a78bfa;">导入 JSON 格式: </div>
+    <button id="tabBasic" class="active">基础模式</button>
+    <button id="tabAdvanced">高级模式</button>
+    <div style="margin-left: 12px; font-size: 12px; color: #a78bfa;">导入 JSON: </div>
     <input type="file" id="jsonUpload" accept=".json" style="width: auto; background: transparent; border: none; padding: 0;" />
   </div>
 
   <!-- 基础模式 -->
   <div id="modeBasic" class="row">
     <div class="col">
-      <!-- 这里将 prompt 分成两行输入是为了符合习惯 -->
       <textarea id="basicPrompt" placeholder="Prompt..." rows="3"></textarea>
     </div>
   </div>
@@ -284,301 +73,107 @@ body {
     </div>
   </div>
 
+  <!-- Negative Prompt -->
   <div class="row">
     <div class="col">
       <textarea id="negPrompt" placeholder="Negative Prompt..." rows="2">worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia, bad hands, bad anatomy, extra fingers, missing fingers, anatomical nonsense</textarea>
     </div>
   </div>
 
-  <div class="common-params">
-    <label>Seed: <input type="number" id="paramSeed" value="-1" /></label>
-    <label>Steps: <input type="number" id="paramSteps" value="20" /></label>
-    <label>CFG: <input type="number" step="0.1" id="paramCfg" value="4.5" /></label>
-    <label>Aspect Ratio: <input type="text" id="paramRatio" value="3:4" placeholder="3:4" /></label>
-    <label>Width: <input type="number" id="paramWidth" value="0" /></label>
-    <label>Height: <input type="number" id="paramHeight" value="0" /></label>
+  <!-- ============================================================
+       分辨率选择：Aspect Ratio × Megapixels（Phase 2.1）
+       ============================================================ -->
+  <div style="display: flex; flex-direction: column; gap: 8px;">
+    <div style="font-size: 12px; color: #888;">比例:</div>
+    <div class="ratio-group">
+      <button class="ratio-btn" data-ratio="1:1">1:1</button>
+      <button class="ratio-btn active" data-ratio="3:4">3:4</button>
+      <button class="ratio-btn" data-ratio="4:3">4:3</button>
+      <button class="ratio-btn" data-ratio="2:3">2:3</button>
+      <button class="ratio-btn" data-ratio="3:2">3:2</button>
+      <button class="ratio-btn" data-ratio="9:16">9:16</button>
+      <button class="ratio-btn" data-ratio="16:9">16:9</button>
+      <button class="ratio-btn" data-ratio="4:5">4:5</button>
+      <button class="ratio-btn" data-ratio="5:4">5:4</button>
+    </div>
+    <div style="font-size: 12px; color: #888;">像素量 (MP):</div>
+    <div class="mp-group">
+      <button class="mp-btn active" data-mp="1.0">1.0</button>
+      <button class="mp-btn" data-mp="1.5">1.5</button>
+      <button class="mp-btn" data-mp="2.0">2.0</button>
+      <input type="number" id="mpInput" class="mp-input" value="1.0" min="0.5" max="4.0" step="0.1" />
+      <span style="font-size: 12px; color: #888;">MP</span>
+    </div>
+    <div id="resolutionDisplay" class="resolution-display"></div>
   </div>
 
+  <!-- 参数控件（Phase 2.1: 滑块化） -->
+  <div class="common-params">
+    <div class="seed-group">
+      <label style="font-size: 12px;">Seed:</label>
+      <input type="number" id="paramSeed" value="-1" style="width: 100px;" />
+      <button class="seed-btn" id="seedRandom" title="随机">🎲</button>
+    </div>
+    <div class="param-slider">
+      <label>Steps</label>
+      <input type="range" id="stepsSlider" min="5" max="50" value="20" />
+      <span class="value-display" id="stepsValue">20</span>
+      <input type="hidden" id="paramSteps" value="20" />
+    </div>
+    <div class="param-slider">
+      <label>CFG</label>
+      <input type="range" id="cfgSlider" min="1" max="15" step="0.5" value="4.5" />
+      <span class="value-display" id="cfgValue">4.5</span>
+      <input type="hidden" id="paramCfg" value="4.5" />
+    </div>
+  </div>
+
+  <!-- 隐藏的 width/height（由 Ratio×MP 自动计算填充） -->
+  <input type="hidden" id="paramWidth" value="0" />
+  <input type="hidden" id="paramHeight" value="0" />
+
   <div style="display: flex; gap: 16px; align-items: center;">
-    <button id="generateBtn" onclick="doGenerate()">生成图片</button>
+    <button id="generateBtn">生成图片</button>
     <div id="genStatus" style="font-size: 13px; color: #a78bfa;"></div>
   </div>
 </div>
 
+<!-- ============================================================
+     画廊瀑布流
+     ============================================================ -->
 <div class="masonry" id="gallery"></div>
 
+<!-- ============================================================
+     Lightbox（Phase 3.2: 完整重构）
+     ============================================================ -->
 <div class="lightbox" id="lightbox">
+  <!-- 顶部工具栏 -->
+  <div class="lightbox-toolbar">
+    <button class="lb-btn lb-close" id="lbClose" title="关闭 (Esc)">✕</button>
+    <button class="lb-btn" id="lbDownload" title="下载 (D)">⬇</button>
+    <button class="lb-btn" id="lbCopy" title="复制 Prompt (C)">📋</button>
+    <button class="lb-btn" id="lbFill" title="回填参数 (R)">🔄</button>
+    <button class="lb-btn" id="lbFav" title="收藏 (F)">☆</button>
+    <button class="lb-btn" id="lbDelete" title="删除 (Del)">🗑</button>
+    <button class="lb-btn" id="lbToggleMeta" title="元数据 (I)">ℹ</button>
+  </div>
+
+  <!-- 导航箭头 -->
+  <button class="lb-nav lb-prev" id="lbPrev">‹</button>
+  <button class="lb-nav lb-next" id="lbNext">›</button>
+
+  <!-- 主图 -->
   <img id="lightboxImg" src="" alt="full" />
+
+  <!-- 底部元数据面板 -->
+  <div class="lb-meta" id="lbMeta">
+    <div class="lb-prompt" id="lbPrompt"></div>
+    <div class="lb-params" id="lbParams"></div>
+    <div class="lb-thumbstrip" id="lbThumbstrip"></div>
+  </div>
 </div>
 
-<script>
-/* ============================================================
-   画廊前端逻辑。
-   ============================================================ */
-
-const gallery  = document.getElementById('gallery');
-const datePicker = document.getElementById('datePicker');
-const tagFilter  = document.getElementById('tagFilter');
-const statsEl    = document.getElementById('stats');
-const lightbox   = document.getElementById('lightbox');
-const lightboxImg = document.getElementById('lightboxImg');
-
-let allImages = [];  // 全量元数据缓存
-let lastJsonString = ""; // 用于检测数据是否变化
-let currentMode = 'basic'; // 'basic' | 'advanced'
-
-// --- 生图面板相关 ---
-function toggleGenerator() {
-  const panel = document.getElementById('generatorPanel');
-  panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
-}
-
-function switchTab(mode) {
-  currentMode = mode;
-  document.getElementById('tabBasic').classList.toggle('active', mode === 'basic');
-  document.getElementById('tabAdvanced').classList.toggle('active', mode === 'advanced');
-  document.getElementById('modeBasic').style.display = mode === 'basic' ? 'flex' : 'none';
-  document.getElementById('modeAdvanced').style.display = mode === 'advanced' ? 'flex' : 'none';
-}
-
-document.getElementById('jsonUpload').addEventListener('change', e => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = evt => {
-    try {
-      const data = JSON.parse(evt.target.result);
-      if (data.prompt) document.getElementById('basicPrompt').value = data.prompt;
-      if (data.negative_prompt) document.getElementById('negPrompt').value = data.negative_prompt;
-      if (data.seed !== undefined) document.getElementById('paramSeed').value = data.seed;
-      if (data.steps !== undefined) document.getElementById('paramSteps').value = data.steps;
-      if (data.cfg_scale !== undefined) document.getElementById('paramCfg').value = data.cfg_scale;
-      if (data.aspect_ratio) document.getElementById('paramRatio').value = data.aspect_ratio;
-      if (data.width !== undefined) document.getElementById('paramWidth').value = data.width;
-      if (data.height !== undefined) document.getElementById('paramHeight').value = data.height;
-      
-      switchTab('basic');
-    } catch(err) {
-      alert("解析 JSON 失败: " + err.message);
-    }
-  };
-  reader.readAsText(file);
-});
-
-async function doGenerate() {
-  const btn = document.getElementById('generateBtn');
-  const statusEl = document.getElementById('genStatus');
-  
-  const payload = {
-    mode: currentMode,
-    negative_prompt: document.getElementById('negPrompt').value,
-    seed: parseInt(document.getElementById('paramSeed').value),
-    steps: parseInt(document.getElementById('paramSteps').value),
-    cfg_scale: parseFloat(document.getElementById('paramCfg').value),
-    aspect_ratio: document.getElementById('paramRatio').value,
-    width: parseInt(document.getElementById('paramWidth').value),
-    height: parseInt(document.getElementById('paramHeight').value),
-  };
-  
-  if (currentMode === 'basic') {
-    payload.prompt = document.getElementById('basicPrompt').value;
-  } else {
-    payload.quality_meta_year_safe = document.getElementById('advQuality').value;
-    payload.count = document.getElementById('advCount').value;
-    payload.character = document.getElementById('advCharacter').value;
-    payload.series = document.getElementById('advSeries').value;
-    payload.appearance = document.getElementById('advAppearance').value;
-    payload.artist = document.getElementById('advArtist').value;
-    payload.style = document.getElementById('advStyle').value;
-    payload.tags = document.getElementById('advTags').value;
-    payload.nltags = document.getElementById('advNltags').value;
-    payload.environment = document.getElementById('advEnvironment').value;
-  }
-  
-  btn.disabled = true;
-  statusEl.textContent = "正在生成，请耐心等待...";
-  
-  try {
-    const res = await fetch('/api/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-    // 安全中间件返回 401 时跳转到登录页（cookie 过期等场景）
-    if (res.status === 401) { window.location.href = '/login'; return; }
-
-    if (res.ok && data.status === "ok") {
-      statusEl.textContent = `生成完成！耗时 ${data.meta.generation_time}s`;
-      setTimeout(() => { statusEl.textContent = ""; }, 5000);
-      loadData(); // 立即获取新图
-    } else {
-      statusEl.textContent = "生成失败: " + JSON.stringify(data);
-    }
-  } catch (err) {
-    statusEl.textContent = "请求错误: " + err.message;
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-// --- 标签分类规则 ---
-function tagClass(tag) {
-  const t = tag.toLowerCase();
-  if (t.startsWith('@'))                         return 'artist';
-  if (/^(safe|sensitive)$/.test(t))               return 'safety';
-  if (/^(nsfw|explicit)$/.test(t))                return 'nsfw';
-  if (/^(masterpiece|best quality|highres)/.test(t)) return 'quality';
-  if (/^score_/.test(t))                          return 'score';
-  if (/^\d*(girl|boy|other)s?$/.test(t) || t === 'no humans') return 'count';
-  return '';
-}
-
-// --- 渲染单张卡片 ---
-function renderCard(img, isFlash = false) {
-  const date = img.date || '';
-  const fn   = img.filename || '';
-  const relPath = `${date}/${fn}`;
-  const thumbUrl = `/api/image?path=${encodeURIComponent(relPath)}&thumb=1`;
-  const fullUrl  = `/api/image?path=${encodeURIComponent(relPath)}`;
-
-  // 标签 HTML
-  const tags = (img.tags || []).slice(0, 20);  // 最多显示 20 个
-  const tagsHtml = tags.map(t =>
-    `<span class="tag ${tagClass(t)}" onclick="filterByTag('${t.replace(/'/g,"\\'")}')"
-          title="${t}">${t}</span>`
-  ).join('');
-
-  return `
-    <div class="card ${isFlash ? 'flash' : ''}">
-      <img src="${thumbUrl}" alt="" loading="lazy"
-           onclick="openLightbox('${fullUrl}')" />
-      <div class="info">
-        <div class="tags">${tagsHtml}</div>
-        <div class="meta-line">
-          <span>seed: ${img.seed ?? '?'}</span>
-          <span>${img.width}×${img.height}</span>
-          <span>${img.steps}steps</span>
-          <span>${(img.generation_time || 0).toFixed(1)}s</span>
-          <span>${date}</span>
-        </div>
-      </div>
-    </div>`;
-}
-
-// --- 渲染全部卡片 ---
-function renderAll(images) {
-  if (images.length === 0) {
-    gallery.innerHTML = '<div class="empty">还没有图片，快去生图面板生成吧！</div>';
-  } else {
-    gallery.innerHTML = images.map(i => renderCard(i, false)).join('');
-  }
-  statsEl.textContent = `${images.length} 张图片`;
-}
-
-// --- 过滤逻辑 ---
-// 如果传入 addedImages，则采用增量插入模式，只前插新图片
-function applyFilter(addedImages = null) {
-  const date = datePicker.value;
-  const kw = tagFilter.value.trim().toLowerCase();
-  
-  if (addedImages) {
-    let filteredNew = addedImages;
-    if (date) filteredNew = filteredNew.filter(i => i.date === date);
-    if (kw) filteredNew = filteredNew.filter(i =>
-      (i.tags || []).some(t => t.toLowerCase().includes(kw))
-    );
-    if (filteredNew.length > 0) {
-      const empty = gallery.querySelector('.empty');
-      if (empty) empty.remove();
-      
-      // 反转一下让最新的保持在最前面
-      const newHtmls = filteredNew.reverse().map(i => renderCard(i, true)).join('');
-      gallery.insertAdjacentHTML('afterbegin', newHtmls);
-    }
-    statsEl.textContent = `${allImages.length} 张图片`;
-  } else {
-    let filtered = allImages;
-    if (date) filtered = filtered.filter(i => i.date === date);
-    if (kw) filtered = filtered.filter(i =>
-      (i.tags || []).some(t => t.toLowerCase().includes(kw))
-    );
-    renderAll(filtered);
-  }
-}
-
-// 点击标签快速过滤
-function filterByTag(tag) {
-  tagFilter.value = tag;
-  applyFilter();
-}
-
-// --- Lightbox ---
-function openLightbox(url) {
-  lightboxImg.src = url;
-  lightbox.classList.add('active');
-}
-lightbox.addEventListener('click', () => {
-  lightbox.classList.remove('active');
-  lightboxImg.src = '';
-});
-
-// --- 键盘: Esc 关闭 lightbox ---
-document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') lightbox.classList.remove('active');
-});
-
-// --- 初始加载 ---
-async function loadData() {
-  if (allImages.length === 0) {
-    gallery.innerHTML = '<div class="loading">正在寻找精美画作...</div>';
-  }
-  try {
-    const resp = await fetch('/api/images');
-    // 安全中间件返回 401 时跳转到登录页（cookie 过期等场景）
-    if (resp.status === 401) { window.location.href = '/login'; return; }
-
-    const data = await resp.json();
-
-    const currentJsonString = JSON.stringify(data.images);
-    if (currentJsonString === lastJsonString) return;
-    
-    const newImages = data.images || [];
-    const oldSet = new Set(allImages.map(i => i.filename));
-    const addedImages = newImages.filter(i => !oldSet.has(i.filename));
-    
-    lastJsonString = currentJsonString;
-    allImages = newImages;
-
-    // 填充日期选择器
-    const dates = data.dates || [];
-    const currentPickerVal = datePicker.value;
-    datePicker.innerHTML = '<option value="">全部日期</option>' +
-      dates.map(d => `<option value="${d}">${d}</option>`).join('');
-    // 保持用户当前的筛选状态
-    datePicker.value = currentPickerVal;
-
-    // 判断是全量更新还是增量闪黑前插
-    if (oldSet.size === 0 || addedImages.length === 0 || addedImages.length > 50) {
-      applyFilter();
-    } else {
-      applyFilter(addedImages);
-    }
-  } catch (err) {
-    if (allImages.length === 0) {
-      gallery.innerHTML = `<div class="empty">加载失败: ${err.message}</div>`;
-    }
-  }
-}
-
-datePicker.addEventListener('change', () => applyFilter());
-tagFilter.addEventListener('input', () => applyFilter());
-
-// 页面加载时拉取数据
-loadData();
-
-// 每 30 秒自动刷新（新图会自动增量出现）
-setInterval(loadData, 30000);
-</script>
+<!-- JS 模块入口 -->
+<script type="module" src="/static/js/app.js"></script>
 </body>
 </html>

@@ -77,3 +77,7 @@ workflow.json
 Thumbs.db
 .idea/
 .vscode/
+
+# 外部引用（junction 软链接，仅本地调研用）
+external_refs/
+
