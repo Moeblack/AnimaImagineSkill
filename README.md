@@ -39,7 +39,7 @@ AnimaImagineSkill 服务器
   | 2.7 | 3.3 | `uv pip install "triton-windows<3.4"` |
   | 2.6 | 3.2 | `uv pip install "triton-windows<3.3"` |
 
-- **不想/不能安装 Triton？**  
+- **不想/不能安装 Triton？**
   在 `config.yaml` 中将 `compile_models` 设为 `false`，或设置环境变量 `ANIMA_COMPILE_MODELS=false` 即可跳过编译，但会损失显著的性能提升。
 
 ---
@@ -334,7 +334,7 @@ python -m anima_imagine
 | 地址 | 说明 |
 |---|---|
 | `http://localhost:8008/mcp/` | MCP 端点（AI 客户端连接） |
-| `http://localhost:8008/` | 图片画廊（瀑布流浏览） |
+| `http://localhost:8008/` | 图片画廊 + 生图面板 |
 | `http://localhost:8008/health` | 健康检查 |
 
 ---
@@ -430,6 +430,38 @@ server {
 
 ---
 
+## 画廊与生图面板
+
+网页端（`http://localhost:8008/`）提供完整的图片管理和生图功能：
+
+### 图库
+
+- **网格布局**：按从左到右、从上到下的阅读顺序排列，一次最多加载 2000 张。
+- **灯箱查看器**：点击图片进入全屏浏览。支持滚轮缩放、双击切换原始/适应尺寸、拖拽平移查看细节。UI 默认隐藏，鼠标移动时自动淡入；按 ℹ 键或点击按钮显示元数据（prompt、negative prompt、参数）。
+- **收藏 / 删除 / 下载 / 复制 Prompt / 回填参数**：卡片悬停和灯箱中均可操作。
+- **批量操作**：长按卡片或按 S 键进入多选模式，支持批量下载、复制、删除。
+- **标签过滤 / 日期筛选**：顶栏实时搜索和按日期切换。
+
+### 生图面板
+
+- **基础模式**：直接输入完整 prompt。
+- **高级模式**：12 个语义槽位（质量、人数、角色、作品、画师、外表、服饰、姿势、构图、环境、画风、自然语言补充），每个都是独立的 Tag Pill 输入框。
+  - **标签自动补全**：从 danbooru 标签库实时搜索匹配，支持按字段类别过滤。
+  - **Pill 胶囊可拖拽排序**：拖动任意标签胶囊调整顺序，生成时按胶囊顺序拼接。
+  - **字段预设保存**：每个字段旁的 💾 按钮可将当前值保存为命名预设，之后一键加载。
+  - **上次值自动恢复**：每个字段的最后使用值自动保存，下次打开页面时恢复。
+  - **高级字段保存到数据库**：高级模式生成的图片会保存各字段原始值，灯箱回填参数时自动切换到高级模式并还原所有字段。
+- **实时预览**：底部实时显示拼接后的完整 prompt。
+- **Negative Prompt**：可折叠，默认预填常用负面提示词。
+- **分辨率控制**：9 种比例预设 + MP 倍率 + 手动输入。
+
+### 标签数据管理
+
+- **标签库缓存**：使用 IndexedDB 存储（解决 localStorage 配额限制），支持手动刷新和导入自定义 CSV。
+- **自定义标签**：支持导入画师、角色等自定义标签 CSV，与核心库合并补全。
+
+---
+
 ---
 
 ## 自定义分辨率
@@ -465,31 +497,39 @@ AnimaImagineSkill/
 ├── config.yaml               # 本地配置（不提交，在 .gitignore 中）
 ├── pyproject.toml
 ├── mcp-config.json           # MCP 客户端配置示例
-├── download_anima.py          # ModelScope 模型下载脚本
+├── download_anima.py         # ModelScope 模型下载脚本
 ├── start.ps1                 # Windows 启动脚本
-├── models/                    # 所有模型文件（按类别分子目录）
-│   ├── diffusion_models/      #   Anima DiT 扩散模型
-│   ├── text_encoders/         #   Qwen3 文本编码器权重
-│   ├── vae/                   #   Qwen-Image VAE
-│   └── tokenizers/            #   tokenizer 文件（不含模型权重）
-│       ├── qwen3-0.6b/
-│       └── t5xxl/
+├── models/                   # 所有模型文件（按类别分子目录）
 ├── src/anima_imagine/
-│   ├── server.py             # FastMCP 入口 + 画廊路由
-│   ├── pipeline.py           # DiffSynth GPU 推理封装
-│   ├── prompt_builder.py     # 结构化字段 → prompt 拼接
+│   ├── app.py                # v2 App Factory（组装所有组件）
+│   ├── main.py               # CLI 入口
 │   ├── config.py             # 配置加载（YAML + 环境变量）
-│   ├── storage.py            # 日期归档 + 缩略图
-│   ├── resolution.py         # 比例 → 分辨率映射
-│   └── gallery.html          # 瀑布流画廊网页
+│   ├── prompt_builder.py     # 结构化字段 → prompt 拼接
+│   ├── codex.py              # 法典检索器
+│   ├── gallery.html          # 画廊 + 生图面板网页
+│   ├── login.html            # 登录页
+│   ├── domain/               # 领域模型（ImageRecord, Job 等）
+│   ├── infra/                # 基础设施（DB, Storage, Pipeline, Queue, Security）
+│   ├── routers/              # 路由层（auth, gallery, generate, mcp, pages）
+│   ├── schemas/              # API 输入校验
+│   ├── services/             # 业务服务层
+│   └── static/
+│       ├── css/gallery.css
+│       └── js/
+│           ├── app.js              # 前端主入口
+│           ├── generator.js        # 生图面板逻辑
+│           ├── gallery-view.js     # 图库卡片渲染
+│           ├── lightbox.js         # 灯箱（缩放/平移/UI 自动隐藏）
+│           ├── pill-input.js       # Tag Pill 输入组件
+│           ├── autocomplete.js     # 标签自动补全
+│           ├── tag-data.js         # 标签数据管理（IndexedDB）
+│           ├── tag-data-manager.js  # 标签数据管理面板
+│           ├── field-presets.js     # 字段预设保存/加载
+│           └── utils.js            # 通用工具
+├── tests/                    # 单元测试
 ├── AnimaImagineSkill/
 │   ├── SKILL.md              # 提示词工程师 Skill
-│   └── references/
-│       ├── artist-list.md    # 画师收藏
-│       ├── prompt-examples.md
-│       ├── build_index.py    # 法典目录构建脚本
-│       ├── 法典-*.md         # 法典正文（版权物，不提交，见「法典数据准备」）
-│       └── 法典-*-目录.json  # 目录 / 细目录（版权物，不提交）
+│   └── references/           # 法典数据（版权物，不提交）
 └── output/                   # 生成的图片（按日期分目录）
 ```
 
@@ -523,12 +563,31 @@ AnimaImagineSkill/
 
 ---
 
-## 设计决策
+## 架构设计
+
+### v2 分层架构
+
+```
+┌─────────────────────────────────────────────┐
+│  Routers (auth, gallery, generate, mcp)     │  HTTP/MCP 请求入口
+├─────────────────────────────────────────────┤
+│  Services (auth, gallery, generation)       │  业务逻辑
+├─────────────────────────────────────────────┤
+│  Domain (ImageRecord, Job, Resolution)      │  纯数据模型
+├─────────────────────────────────────────────┤
+│  Infra (DB, Storage, Pipeline, Queue)       │  基础设施
+└─────────────────────────────────────────────┘
+```
+
+### 设计决策
 
 - **无 ComfyUI 依赖**：直接调用 DiffSynth-Studio，单进程部署。
-- **Prompt 拼接由 AI 完成**：工具接受已拼接的字符串，不做结构化拆分。Skill 教 AI 正确的标签顺序。
-- **GPU 串行调度**：`asyncio.Lock` 保证同时只有 1 个推理任务，多请求自动排队。
-- **显存管理**：默认不复用 `torch.cuda.empty_cache()`，提升连续生成速度；低显存或单次运行场景可在配置中开启。
+- **v2 分层架构**：router → service → domain → infra，清晰的依赖方向，告别 v1 的 server.py 单文件架构。
+- **SQLite 图库索引**：替代 v1 的 JSON 文件扫描，支持高效的日期筛选、收藏、软删除和分页查询。DB schema 内置版本迁移（v1→v2 自动 ALTER TABLE）。
+- **异步任务队列**：`JobQueue` + `asyncio` 线程池执行 GPU 推理，请求立即返回 job_id，前端轮询状态。
+- **IndexedDB 标签缓存**：前端标签数据（5-8MB danbooru CSV）从 localStorage 迁移到 IndexedDB，解决浏览器配额限制。旧数据自动迁移。
+- **Prompt 拼接由服务端完成**：高级模式的 12 个语义槽位按 Anima 官方顺序拼接，保证标签顺序正确。
+- **高级字段持久化**：生成时保存各字段原始值到 DB 和 JSON，回填时精确还原高级模式状态。
 - **日期归档**：图片按日期分目录，每张附带元数据 JSON + 缩略图。
 
 ---

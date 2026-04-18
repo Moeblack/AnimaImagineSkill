@@ -1,49 +1,55 @@
 /**
- * AnimaImagine Lightbox 模块。
- * Phase 3.2: 完整重构——工具栏、元数据面板、缩略图导航、翻页、缩放。
+ * AnimaImagine v2.3 Lightbox 模块。
+ *
+ * v2.3 变更：
+ * - 滚轮缩放 + 双击切换原始/适应 + 拖拽平移
+ * - UI 自动隐藏（鼠标活动时淡入）
+ * - 缩略图条独立固定在底部
+ * - 缩放比例指示器
  */
 
 import { escapeHtml, showToast } from './utils.js';
 
-// ============================================================
-// 状态
-// ============================================================
-
-let currentImages = [];  // 当前可浏览的图片列表
+let currentImages = [];
 let currentIndex = -1;
 let metaExpanded = true;
-
-// 外部回调
 let onFillGenerator = null;
 
-// DOM
-let lbRoot, lbImg, lbPrompt, lbParams, lbThumbstrip;
+let lbRoot, lbImg, lbImgWrap, lbPrompt, lbNegPrompt, lbParams, lbThumbstrip, lbZoomLabel;
 
 // ============================================================
-// 初始化
+// 缩放/平移状态
 // ============================================================
+let scale = 1;
+let panX = 0, panY = 0;
+let isDragging = false;
+let dragStartX = 0, dragStartY = 0;
+let panStartX = 0, panStartY = 0;
+const MIN_SCALE = 0.5;
+const MAX_SCALE = 10;
+const ZOOM_STEP = 1.15; // 每次滚轮缩放倍率
 
 export function init(options = {}) {
   onFillGenerator = options.onFillGenerator || null;
 
   lbRoot = document.getElementById('lightbox');
   lbImg = document.getElementById('lightboxImg');
+  lbImgWrap = document.getElementById('lbImgWrap');
   lbPrompt = document.getElementById('lbPrompt');
+  lbNegPrompt = document.getElementById('lbNegPrompt');
   lbParams = document.getElementById('lbParams');
   lbThumbstrip = document.getElementById('lbThumbstrip');
+  lbZoomLabel = document.getElementById('lbZoomLabel');
 
-  // 关闭
   document.getElementById('lbClose')?.addEventListener('click', close);
-  lbRoot.addEventListener('click', (e) => {
-    // 只有点击背景层才关闭，点击工具栏/图片不关闭
-    if (e.target === lbRoot) close();
+  // 【v2.3】点击背景关闭改为：只有未缩放时点击背景才关闭
+  lbImgWrap.addEventListener('click', (e) => {
+    if (e.target === lbImgWrap && scale <= 1.01) close();
   });
 
-  // 导航
   document.getElementById('lbPrev')?.addEventListener('click', () => navigate(-1));
   document.getElementById('lbNext')?.addEventListener('click', () => navigate(1));
 
-  // 工具栏按钮
   document.getElementById('lbDownload')?.addEventListener('click', _download);
   document.getElementById('lbCopy')?.addEventListener('click', _copyPrompt);
   document.getElementById('lbFill')?.addEventListener('click', _fill);
@@ -51,11 +57,10 @@ export function init(options = {}) {
   document.getElementById('lbDelete')?.addEventListener('click', _delete);
   document.getElementById('lbToggleMeta')?.addEventListener('click', _toggleMeta);
 
-  // 键盘快捷键
   document.addEventListener('keydown', (e) => {
     if (!lbRoot.classList.contains('active')) return;
     switch (e.key) {
-      case 'Escape':   close(); e.preventDefault(); break;
+      case 'Escape':     close(); e.preventDefault(); break;
       case 'ArrowLeft':  navigate(-1); e.preventDefault(); break;
       case 'ArrowRight': navigate(1);  e.preventDefault(); break;
       case 'd': case 'D': _download(); break;
@@ -64,30 +69,172 @@ export function init(options = {}) {
       case 'f': case 'F': _toggleFav(); break;
       case 'i': case 'I': _toggleMeta(); break;
       case 'Delete':     _delete(); break;
+      // 【v2.3】键盘缩放：+ 放大、- 缩小、0 复位
+      case '+': case '=': _zoomAtCenter(ZOOM_STEP); break;
+      case '-':           _zoomAtCenter(1 / ZOOM_STEP); break;
+      case '0':           _resetZoom(); break;
     }
   });
+
+  _initUIAutoHide();
+  _initZoomPan();
 }
 
 // ============================================================
-// 打开 / 关闭
+// UI 自动隐藏
 // ============================================================
+let _uiTimer = 0;
+const UI_HIDE_DELAY = 2000;
 
-/**
- * 打开 Lightbox，显示指定 path 的图片。
- * @param {string} path - 图片相对路径，如 "2026-04-15/140703_636473557.png"
- * @param {Array} images - 当前可浏览的图片元数据数组
- */
+function _showUI() {
+  lbRoot.classList.add('ui-visible');
+  clearTimeout(_uiTimer);
+  _uiTimer = setTimeout(() => lbRoot.classList.remove('ui-visible'), UI_HIDE_DELAY);
+}
+
+function _initUIAutoHide() {
+  lbRoot.addEventListener('mousemove', _showUI);
+  lbRoot.addEventListener('click', _showUI);
+}
+
+// ============================================================
+// 缩放 & 平移
+// 【v2.3 新增】滚轮缩放以鼠标位置为锚点，双击切换原始/适应，
+// 缩放后可拖拽平移查看细节。
+// ============================================================
+function _initZoomPan() {
+  // 滚轮缩放，以鼠标位置为锚点
+  lbImgWrap.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+    _zoomAt(e.clientX, e.clientY, factor);
+  }, { passive: false });
+
+  // 双击：切换「适应屏幕 ↔ 原始尺寸」
+  lbImgWrap.addEventListener('dblclick', (e) => {
+    e.preventDefault();
+    if (scale > 1.01) {
+      // 已放大 → 复位
+      _resetZoom();
+    } else {
+      // 适应 → 放大到原始像素尺寸，以双击位置为锚点
+      const naturalScale = _getNaturalScale();
+      if (naturalScale > 1.05) {
+        _zoomAt(e.clientX, e.clientY, naturalScale / scale);
+      } else {
+        // 原始尺寸比屏幕还小，放大到 2x
+        _zoomAt(e.clientX, e.clientY, 2 / scale);
+      }
+    }
+  });
+
+  // 拖拽平移
+  lbImgWrap.addEventListener('pointerdown', (e) => {
+    if (scale <= 1.01) return; // 未缩放时不拖拽
+    if (e.button !== 0) return;
+    isDragging = true;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+    panStartX = panX;
+    panStartY = panY;
+    lbImgWrap.classList.add('dragging');
+    lbImgWrap.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  lbImgWrap.addEventListener('pointermove', (e) => {
+    if (!isDragging) return;
+    panX = panStartX + (e.clientX - dragStartX);
+    panY = panStartY + (e.clientY - dragStartY);
+    _applyTransform();
+  });
+
+  lbImgWrap.addEventListener('pointerup', _endDrag);
+  lbImgWrap.addEventListener('pointercancel', _endDrag);
+}
+
+function _endDrag() {
+  isDragging = false;
+  lbImgWrap.classList.remove('dragging');
+}
+
+/** 以屏幕坐标 (cx, cy) 为锚点缩放 */
+function _zoomAt(cx, cy, factor) {
+  const newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * factor));
+  if (newScale === scale) return;
+
+  // 计算图片在 wrap 中的位置
+  const rect = lbImg.getBoundingClientRect();
+  // 鼠标在图片上的相对位置（缩放前）
+  const imgX = (cx - rect.left) / scale;
+  const imgY = (cy - rect.top) / scale;
+
+  // 缩放后，该点应该还在鼠标下
+  panX += imgX * (scale - newScale);
+  panY += imgY * (scale - newScale);
+  scale = newScale;
+
+  _applyTransform();
+  _updateZoomUI();
+}
+
+/** 以视口中心为锚点缩放（键盘用） */
+function _zoomAtCenter(factor) {
+  const wrapRect = lbImgWrap.getBoundingClientRect();
+  _zoomAt(wrapRect.left + wrapRect.width / 2, wrapRect.top + wrapRect.height / 2, factor);
+}
+
+/** 回到适应屏幕 */
+function _resetZoom() {
+  scale = 1;
+  panX = 0;
+  panY = 0;
+  _applyTransform();
+  _updateZoomUI();
+}
+
+/** 计算原始像素尺寸相对于当前适应尺寸的比例 */
+function _getNaturalScale() {
+  if (!lbImg.naturalWidth) return 1;
+  const displayW = lbImg.clientWidth;
+  const displayH = lbImg.clientHeight;
+  if (!displayW || !displayH) return 1;
+  return Math.max(lbImg.naturalWidth / displayW, lbImg.naturalHeight / displayH);
+}
+
+function _applyTransform() {
+  lbImg.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+  lbImgWrap.classList.toggle('zoomed', scale > 1.01);
+}
+
+function _updateZoomUI() {
+  if (lbZoomLabel) {
+    const pct = Math.round(scale * 100);
+    lbZoomLabel.textContent = scale > 1.01 ? `${pct}%` : '';
+  }
+}
+
+// ============================================================
+// 打开 / 关闭 / 导航
+// ============================================================
 export function open(path, images) {
   currentImages = images;
   currentIndex = images.findIndex(i => `${i.date}/${i.filename}` === path);
   if (currentIndex < 0) currentIndex = 0;
-
+  _resetZoom();
   _show(currentIndex);
   lbRoot.classList.add('active');
+  // 【v2.3】打开时默认不显示元数据，需要手动按 ℹ
+  metaExpanded = false;
+  lbRoot.classList.remove('meta-visible');
 }
 
 export function close() {
   lbRoot.classList.remove('active');
+  lbRoot.classList.remove('ui-visible');
+  lbRoot.classList.remove('meta-visible');
+  clearTimeout(_uiTimer);
+  _resetZoom();
   lbImg.src = '';
 }
 
@@ -96,24 +243,22 @@ export function navigate(dir) {
   currentIndex += dir;
   if (currentIndex < 0) currentIndex = currentImages.length - 1;
   if (currentIndex >= currentImages.length) currentIndex = 0;
+  _resetZoom();
   _show(currentIndex);
 }
-
-// ============================================================
-// 内部渲染
-// ============================================================
 
 function _show(idx) {
   const img = currentImages[idx];
   if (!img) return;
 
   const relPath = `${img.date}/${img.filename}`;
-  const fullUrl = `/api/image?path=${encodeURIComponent(relPath)}`;
-  lbImg.src = fullUrl;
+  lbImg.src = `/api/image?path=${encodeURIComponent(relPath)}`;
 
-  // 元数据
-  if (lbPrompt) {
-    lbPrompt.textContent = img.prompt || '(无 prompt)';
+  if (lbPrompt) lbPrompt.textContent = img.prompt || '(无 prompt)';
+  if (lbNegPrompt) {
+    const neg = img.negative_prompt || '';
+    lbNegPrompt.textContent = neg ? `⛔ ${neg}` : '';
+    lbNegPrompt.style.display = neg ? 'block' : 'none';
   }
   if (lbParams) {
     lbParams.innerHTML = `
@@ -125,9 +270,10 @@ function _show(idx) {
     `;
   }
 
-  // 缩略图导航条
+  const favBtn = document.getElementById('lbFav');
+  if (favBtn) favBtn.textContent = img.favorited ? '★' : '☆';
+
   if (lbThumbstrip) {
-    // 只显示当前图片前后各 5 张，避免 DOM 过多
     const start = Math.max(0, idx - 5);
     const end = Math.min(currentImages.length, idx + 6);
     lbThumbstrip.innerHTML = '';
@@ -138,22 +284,20 @@ function _show(idx) {
       const thumb = document.createElement('img');
       thumb.src = thumbUrl;
       thumb.className = i === idx ? 'active' : '';
-      thumb.addEventListener('click', () => { currentIndex = i; _show(i); });
+      thumb.addEventListener('click', () => { currentIndex = i; _resetZoom(); _show(i); });
       lbThumbstrip.appendChild(thumb);
     }
   }
 }
 
 // ============================================================
-// 工具栏操作
+// 操作
 // ============================================================
-
 function _download() {
   const img = currentImages[currentIndex];
   if (!img) return;
-  const relPath = `${img.date}/${img.filename}`;
   const a = document.createElement('a');
-  a.href = `/api/image?path=${encodeURIComponent(relPath)}`;
+  a.href = `/api/image?path=${encodeURIComponent(`${img.date}/${img.filename}`)}`;
   a.download = img.filename;
   a.click();
 }
@@ -188,6 +332,11 @@ async function _toggleFav() {
       img.favorited = !img.favorited;
       const btn = document.getElementById('lbFav');
       if (btn) btn.textContent = img.favorited ? '★' : '☆';
+      const cardFav = document.querySelector(`.card-fav[data-path="${CSS.escape(relPath)}"]`);
+      if (cardFav) {
+        cardFav.classList.toggle('favorited', img.favorited);
+        cardFav.textContent = img.favorited ? '★' : '☆';
+      }
     }
   } catch (err) {
     showToast('收藏失败', 'error');
@@ -198,12 +347,33 @@ async function _delete() {
   const img = currentImages[currentIndex];
   if (!img) return;
   if (!confirm('确定删除这张图片？')) return;
-  showToast('删除功能待实现', 'info');
-  // TODO: 调用后端删除 API
+
+  const relPath = `${img.date}/${img.filename}`;
+  try {
+    const resp = await fetch('/api/image/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: [relPath] }),
+    });
+    if (resp.ok) {
+      showToast('✅ 已删除', 'success');
+      currentImages.splice(currentIndex, 1);
+      const card = document.querySelector(`.card[data-path="${CSS.escape(relPath)}"]`);
+      if (card) card.remove();
+      if (currentImages.length === 0) {
+        close();
+      } else {
+        if (currentIndex >= currentImages.length) currentIndex = 0;
+        _show(currentIndex);
+      }
+    }
+  } catch (err) {
+    showToast('删除失败: ' + err.message, 'error');
+  }
 }
 
 function _toggleMeta() {
   metaExpanded = !metaExpanded;
-  const meta = document.getElementById('lbMeta');
-  if (meta) meta.style.display = metaExpanded ? 'block' : 'none';
+  // 【v2.3】用 class 控制元数据显示，点击 ℹ 按钮切换，不随鼠标自动出现
+  lbRoot.classList.toggle('meta-visible', metaExpanded);
 }

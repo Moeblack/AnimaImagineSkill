@@ -1,13 +1,15 @@
 /**
- * AnimaImagine 通用工具函数。
- * Phase 1.1: 从 gallery.html 抽出的公共逻辑 + 新增 Toast / 分辨率计算等工具。
+ * AnimaImagine v2 通用工具函数。
+ *
+ * v2 变更：
+ * - 移除了 calcResolution（分辨率现在从服务端获取，解决前后端分叉问题）
+ * - 新增 UI 配置加载函数
  */
 
 // ============================================================
 // HTML 转义
 // ============================================================
 
-/** 转义 HTML 特殊字符，防止 XSS */
 export function escapeHtml(str) {
   if (typeof str !== 'string') return str;
   return str
@@ -22,7 +24,6 @@ export function escapeHtml(str) {
 // 数字格式化
 // ============================================================
 
-/** 将数字转为人类可读格式：1234 → 1.2k，1234567 → 1.2M */
 export function formatCount(num) {
   if (num == null || isNaN(num)) return '0';
   if (num < 1000) return String(num);
@@ -40,29 +41,67 @@ export function formatCount(num) {
 }
 
 // ============================================================
-// 分辨率计算（Aspect Ratio × Megapixels）
+// v2: UI 配置（从服务端加载，单一真相源）
 // ============================================================
 
+/** 服务端分辨率预设表，启动时从 /api/config/ui 加载 */
+let _uiConfig = null;
+
 /**
- * 根据宽高比和目标总像素数计算分辨率。
- * 结果对齐到 16 的倍数（Cosmos VAE 架构要求）。
+ * v2: 从服务端加载 UI 配置（分辨率预设、默认参数）。
+ * 解决前后端分辨率不一致的问题 — 现在只有后端一个真相源。
+ */
+export async function loadUIConfig() {
+  try {
+    const resp = await fetch('/api/config/ui');
+    if (resp.ok) {
+      _uiConfig = await resp.json();
+      console.log('[UI Config] Loaded', _uiConfig.presets?.length, 'presets');
+    }
+  } catch (e) {
+    console.warn('[UI Config] Failed to load:', e);
+  }
+  return _uiConfig;
+}
+
+/** v2: 获取已加载的 UI 配置 */
+export function getUIConfig() {
+  return _uiConfig;
+}
+
+/**
+ * v2: 从服务端预设表查找分辨率。
+ * 替代旧的 calcResolution，不再在前端计算。
  *
- * @param {string} ratio - 宽高比，如 "3:4"
- * @param {number} megapixels - 目标总像素数（百万），如 1.0, 1.5, 2.0
+ * @param {string} ratio - 如 "3:4"
+ * @param {number} megapixels - 目标 MP
  * @returns {{width: number, height: number, actualMP: number}}
  */
-export function calcResolution(ratio, megapixels) {
-  const [rw, rh] = ratio.split(':').map(Number);
-  if (!rw || !rh || !megapixels) return { width: 1024, height: 1024, actualMP: 1.05 };
-  const totalPixels = megapixels * 1_000_000;
-  // width = sqrt(totalPixels * rw / rh)
-  let width = Math.sqrt(totalPixels * rw / rh);
-  let height = width * rh / rw;
-  // 对齐到 16 的倍数
-  width = Math.round(width / 16) * 16;
-  height = Math.round(height / 16) * 16;
-  const actualMP = (width * height) / 1_000_000;
-  return { width, height, actualMP: Math.round(actualMP * 100) / 100 };
+export function getResolution(ratio, megapixels = 1.0) {
+  if (!_uiConfig || !_uiConfig.presets) {
+    // 未加载时的 fallback
+    return { width: 1024, height: 1024, actualMP: 1.05 };
+  }
+  // 从预设表查找基准分辨率
+  const preset = _uiConfig.presets.find(p => p.ratio === ratio);
+  if (!preset) {
+    return { width: 1024, height: 1024, actualMP: 1.05 };
+  }
+
+  // MP 缩放：基准预设是 1.0 MP，按 sqrt(mp) 等比缩放
+  let w = preset.width;
+  let h = preset.height;
+  if (Math.abs(megapixels - 1.0) > 0.01) {
+    const scale = Math.sqrt(megapixels);
+    w = _align16(Math.round(w * scale));
+    h = _align16(Math.round(h * scale));
+  }
+  const actualMP = Math.round((w * h) / 10000) / 100;
+  return { width: w, height: h, actualMP };
+}
+
+function _align16(v) {
+  return Math.max(16, Math.round(v / 16) * 16);
 }
 
 // ============================================================
@@ -79,12 +118,6 @@ function ensureToastContainer() {
   return _toastContainer;
 }
 
-/**
- * 显示 Toast 通知。
- * @param {string} message - 消息文本
- * @param {'success'|'error'|'info'} type - 类型
- * @param {number} duration - 显示时长（ms）
- */
 export function showToast(message, type = 'info', duration = 3000) {
   const container = ensureToastContainer();
   const toast = document.createElement('div');
@@ -98,10 +131,9 @@ export function showToast(message, type = 'info', duration = 3000) {
 }
 
 // ============================================================
-// 标签分类规则（从 gallery.html 迁移）
+// 标签分类
 // ============================================================
 
-/** 根据标签内容返回 CSS 类名，用于卡片中的标签颜色 */
 export function tagClass(tag) {
   const t = tag.toLowerCase();
   if (t.startsWith('@'))                             return 'artist';

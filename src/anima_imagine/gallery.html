@@ -9,7 +9,7 @@
 <body>
 
 <!-- ============================================================
-     选择模式工具栏（Phase 4: 批量操作时替代 header）
+     v2.1: 选择模式工具栏
      ============================================================ -->
 <div class="select-toolbar" id="selectToolbar">
   <button class="sel-close" id="selClose">✕</button>
@@ -21,120 +21,199 @@
 </div>
 
 <!-- ============================================================
-     顶部导航
+     v2.1: 顶部导航（精简，生图面板相关控件移入面板内部）
      ============================================================ -->
 <div class="header">
-  <h1>✨ AnimaImagine Gallery</h1>
-  <button class="toggle-generator" id="toggleGenerator">生图面板</button>
-  <button class="toggle-generator" id="enterSelectMode">☑ 选择</button>
-  <select id="datePicker">
-    <option value="">全部日期</option>
-  </select>
-  <input id="tagFilter" type="text" placeholder="输入标签过滤..." />
-  <select id="promptHistory"><option value="">📜 历史记录</option></select>
+  <h1>✨ AnimaImagine</h1>
+  <button class="header-btn" id="toggleGenerator">🎨 生成</button>
+  <button class="header-btn" id="enterSelectMode">☑ 选择</button>
+  <button class="header-btn" id="openTagManager" title="管理本地标签库">🏷 标签库</button>
+  <div class="header-separator"></div>
+  <select id="datePicker"><option value="">全部日期</option></select>
+  <input id="tagFilter" type="text" placeholder="🔍 标签过滤..." />
+  <select id="promptHistory"><option value="">📜 历史</option></select>
   <span class="stats" id="stats"></span>
 </div>
 
 <!-- ============================================================
-     生图面板
+     v2.1: 重新设计的生图面板
+     设计理念：
+     - 可折叠段落，减少视觉噪音
+     - 高级模式有清晰的字段标签和分组
+     - 实时 prompt 预览
+     - Negative prompt 默认折叠
+     - 参数区紧凑行内排列
      ============================================================ -->
-<div class="generator-panel" id="generatorPanel" style="display: none;">
-  <div class="tabs">
-    <button id="tabBasic" class="active">基础模式</button>
-    <button id="tabAdvanced">高级模式</button>
-    <div style="margin-left: 12px; font-size: 12px; color: #a78bfa;">导入 JSON: </div>
-    <input type="file" id="jsonUpload" accept=".json" style="width: auto; background: transparent; border: none; padding: 0;" />
+<div class="gen-panel" id="generatorPanel" style="display: none;">
+
+  <!-- === 模式切换 + 工具栏 === -->
+  <div class="gen-header">
+    <div class="gen-tabs">
+      <button id="tabBasic" class="gen-tab active">基础</button>
+      <button id="tabAdvanced" class="gen-tab">高级</button>
+    </div>
+    <div class="gen-tools">
+      <label class="gen-import-btn" title="导入 JSON 参数">
+        📂 导入
+        <input type="file" id="jsonUpload" accept=".json" hidden />
+      </label>
+      <button class="gen-tool-btn" id="clearPromptBtn" title="清空所有字段">🗑 清空</button>
+    </div>
+    <button class="gen-close" id="closeGenerator" title="关闭面板">✕</button>
   </div>
 
-  <!-- 基础模式 -->
-  <div id="modeBasic" class="row">
-    <div class="col">
-      <textarea id="basicPrompt" placeholder="Prompt..." rows="3"></textarea>
+  <!-- === 基础模式：单 prompt 输入 === -->
+  <div id="modeBasic">
+    <textarea id="basicPrompt" placeholder="输入提示词... (支持标签自动补全)" rows="3"></textarea>
+  </div>
+
+  <!-- === 高级模式：结构化字段 === -->
+  <div id="modeAdvanced" style="display: none;">
+    <!-- v2.2: 按 Anima 官方标签结构分组，每个字段都是 multiline tag-pill 容器
+         pill 单击编辑、× 删除、可拖动排序、自动补全集成。
+         字段顺序对应最终 prompt 顺序：[quality][count][character][series][artist][general...] -->
+    <div class="adv-grid">
+
+      <div class="adv-group">
+        <div class="adv-group-title">官方头部 · Anima 必备</div>
+        <div class="adv-field">
+          <label class="adv-label">质量 / 元 / 年份 / 安全</label>
+          <div class="pill-host" id="advQuality" data-placeholder="masterpiece, best quality, newest, year 2025, safe"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">人数</label>
+          <div class="pill-host" id="advCount" data-placeholder="1girl / 2girls / no humans" data-single="1"></div>
+        </div>
+      </div>
+
+      <div class="adv-group">
+        <div class="adv-group-title">角色 · 作品 · 画师</div>
+        <div class="adv-field">
+          <label class="adv-label">角色名 <span class="adv-hint">character</span></label>
+          <div class="pill-host" id="advCharacter" data-placeholder="hatsune miku, arima kana"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">作品名 <span class="adv-hint">copyright</span></label>
+          <div class="pill-host" id="advSeries" data-placeholder="vocaloid, oshi no ko"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">画师 <span class="adv-hint">artist · 自动加 @</span></label>
+          <div class="pill-host" id="advArtist" data-placeholder="fkey, toridamono..."></div>
+        </div>
+      </div>
+
+      <div class="adv-group">
+        <div class="adv-group-title">角色描述</div>
+        <div class="adv-field">
+          <label class="adv-label">外表 <span class="adv-hint">发型 / 眼睛 / 身体</span></label>
+          <div class="pill-host" id="advAppearance" data-placeholder="long twintails, aqua hair, aqua eyes"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">服饰 <span class="adv-hint">服装 / 配饰</span></label>
+          <div class="pill-host" id="advOutfit" data-placeholder="white dress, ribbon, thighhighs"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">姿势 / 表情</label>
+          <div class="pill-host" id="advPose" data-placeholder="smile, sitting, looking at viewer"></div>
+        </div>
+      </div>
+
+      <div class="adv-group">
+        <div class="adv-group-title">画面 · 场景</div>
+        <div class="adv-field">
+          <label class="adv-label">构图 / 视角</label>
+          <div class="pill-host" id="advComposition" data-placeholder="upper body, from above, dutch angle"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">环境 / 背景</label>
+          <div class="pill-host" id="advEnvironment" data-placeholder="night, neon, rain, classroom"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">画风 / 光线</label>
+          <div class="pill-host" id="advStyle" data-placeholder="watercolor, soft lighting, cinematic"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">自然语言补充</label>
+          <div class="pill-host pill-host-tall" id="advNlCaption" data-placeholder="可写整段英文 / 中文自然语言描述"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- v2.1: 实时 prompt 预览 —— 用户能立刻看到最终拼接结果 -->
+    <div class="prompt-preview" id="promptPreview">
+      <div class="preview-label">拼接预览</div>
+      <div class="preview-text" id="previewText">（输入字段后自动显示拼接结果）</div>
+      <button class="preview-copy" id="previewCopy" title="复制拼接结果">📋</button>
     </div>
   </div>
 
-  <!-- 高级模式 -->
-  <div id="modeAdvanced" class="row" style="display: none;">
-    <div class="col">
-      <input id="advQuality" placeholder="quality_meta_year_safe" value="masterpiece, best quality, newest, year 2025, safe" />
-      <input id="advCount" placeholder="count (e.g. 1girl)" value="1girl" />
-      <input id="advCharacter" placeholder="character" />
-      <input id="advSeries" placeholder="series" />
+  <!-- === Negative Prompt（可折叠） === -->
+  <details class="neg-section" id="negSection">
+    <summary class="neg-toggle">Negative Prompt <span class="neg-badge" id="negBadge">7 tags</span></summary>
+    <textarea id="negPrompt" rows="2">worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia, bad hands, bad anatomy, extra fingers, missing fingers, anatomical nonsense</textarea>
+  </details>
+
+  <!-- === 参数区：紧凑单行布局 === -->
+  <div class="gen-params">
+    <!-- 比例选择 -->
+    <div class="param-section">
+      <span class="param-label">比例</span>
+      <div class="ratio-group">
+        <button class="ratio-btn" data-ratio="1:1">1:1</button>
+        <button class="ratio-btn active" data-ratio="3:4">3:4</button>
+        <button class="ratio-btn" data-ratio="4:3">4:3</button>
+        <button class="ratio-btn" data-ratio="2:3">2:3</button>
+        <button class="ratio-btn" data-ratio="3:2">3:2</button>
+        <button class="ratio-btn" data-ratio="9:16">9:16</button>
+        <button class="ratio-btn" data-ratio="16:9">16:9</button>
+        <button class="ratio-btn" data-ratio="4:5">4:5</button>
+        <button class="ratio-btn" data-ratio="5:4">5:4</button>
+      </div>
     </div>
-    <div class="col">
-      <input id="advAppearance" placeholder="appearance" />
-      <input id="advArtist" placeholder="artist" />
-      <input id="advStyle" placeholder="style" />
-      <input id="advTags" placeholder="tags" />
+
+    <!-- MP 与分辨率 -->
+    <div class="param-section">
+      <span class="param-label">MP</span>
+      <div class="mp-group">
+        <button class="mp-btn active" data-mp="1.0">1.0</button>
+        <button class="mp-btn" data-mp="1.5">1.5</button>
+        <button class="mp-btn" data-mp="2.0">2.0</button>
+        <input type="number" id="mpInput" class="mp-input" value="1.0" min="0.5" max="4.0" step="0.1" />
+      </div>
+      <span class="resolution-display" id="resolutionDisplay"></span>
     </div>
-    <div class="col">
-      <input id="advNltags" placeholder="nltags" />
-      <input id="advEnvironment" placeholder="environment" />
+
+    <!-- 参数滑块行 -->
+    <div class="param-row">
+      <div class="param-slider">
+        <label>Steps</label>
+        <input type="range" id="stepsSlider" min="5" max="50" value="20" />
+        <span class="value-display" id="stepsValue">20</span>
+        <input type="hidden" id="paramSteps" value="20" />
+      </div>
+      <div class="param-slider">
+        <label>CFG</label>
+        <input type="range" id="cfgSlider" min="1" max="15" step="0.5" value="4.5" />
+        <span class="value-display" id="cfgValue">4.5</span>
+        <input type="hidden" id="paramCfg" value="4.5" />
+      </div>
+      <div class="seed-group">
+        <label>Seed</label>
+        <input type="number" id="paramSeed" value="-1" />
+        <button class="seed-btn" id="seedRandom" title="随机">🎲</button>
+      </div>
     </div>
   </div>
 
-  <!-- Negative Prompt -->
-  <div class="row">
-    <div class="col">
-      <textarea id="negPrompt" placeholder="Negative Prompt..." rows="2">worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia, bad hands, bad anatomy, extra fingers, missing fingers, anatomical nonsense</textarea>
-    </div>
-  </div>
-
-  <!-- ============================================================
-       分辨率选择：Aspect Ratio × Megapixels（Phase 2.1）
-       ============================================================ -->
-  <div style="display: flex; flex-direction: column; gap: 8px;">
-    <div style="font-size: 12px; color: #888;">比例:</div>
-    <div class="ratio-group">
-      <button class="ratio-btn" data-ratio="1:1">1:1</button>
-      <button class="ratio-btn active" data-ratio="3:4">3:4</button>
-      <button class="ratio-btn" data-ratio="4:3">4:3</button>
-      <button class="ratio-btn" data-ratio="2:3">2:3</button>
-      <button class="ratio-btn" data-ratio="3:2">3:2</button>
-      <button class="ratio-btn" data-ratio="9:16">9:16</button>
-      <button class="ratio-btn" data-ratio="16:9">16:9</button>
-      <button class="ratio-btn" data-ratio="4:5">4:5</button>
-      <button class="ratio-btn" data-ratio="5:4">5:4</button>
-    </div>
-    <div style="font-size: 12px; color: #888;">像素量 (MP):</div>
-    <div class="mp-group">
-      <button class="mp-btn active" data-mp="1.0">1.0</button>
-      <button class="mp-btn" data-mp="1.5">1.5</button>
-      <button class="mp-btn" data-mp="2.0">2.0</button>
-      <input type="number" id="mpInput" class="mp-input" value="1.0" min="0.5" max="4.0" step="0.1" />
-      <span style="font-size: 12px; color: #888;">MP</span>
-    </div>
-    <div id="resolutionDisplay" class="resolution-display"></div>
-  </div>
-
-  <!-- 参数控件（Phase 2.1: 滑块化） -->
-  <div class="common-params">
-    <div class="seed-group">
-      <label style="font-size: 12px;">Seed:</label>
-      <input type="number" id="paramSeed" value="-1" style="width: 100px;" />
-      <button class="seed-btn" id="seedRandom" title="随机">🎲</button>
-    </div>
-    <div class="param-slider">
-      <label>Steps</label>
-      <input type="range" id="stepsSlider" min="5" max="50" value="20" />
-      <span class="value-display" id="stepsValue">20</span>
-      <input type="hidden" id="paramSteps" value="20" />
-    </div>
-    <div class="param-slider">
-      <label>CFG</label>
-      <input type="range" id="cfgSlider" min="1" max="15" step="0.5" value="4.5" />
-      <span class="value-display" id="cfgValue">4.5</span>
-      <input type="hidden" id="paramCfg" value="4.5" />
-    </div>
-  </div>
-
-  <!-- 隐藏的 width/height（由 Ratio×MP 自动计算填充） -->
+  <!-- 隐藏的 width/height -->
   <input type="hidden" id="paramWidth" value="0" />
   <input type="hidden" id="paramHeight" value="0" />
 
-  <div style="display: flex; gap: 16px; align-items: center;">
-    <button id="generateBtn">生成图片</button>
-    <div id="genStatus" style="font-size: 13px; color: #a78bfa;"></div>
+  <!-- === 生成按钮区 === -->
+  <div class="gen-footer">
+    <button id="generateBtn" class="gen-submit">✨ 生成图片</button>
+    <span class="gen-hint">Ctrl+Enter</span>
+    <div id="genStatus" class="gen-status"></div>
   </div>
 </div>
 
@@ -144,12 +223,13 @@
 <div class="masonry" id="gallery"></div>
 
 <!-- ============================================================
-     Lightbox（Phase 3.2: 完整重构）
+     Lightbox
      ============================================================ -->
 <div class="lightbox" id="lightbox">
-  <!-- 顶部工具栏 -->
   <div class="lightbox-toolbar">
     <button class="lb-btn lb-close" id="lbClose" title="关闭 (Esc)">✕</button>
+    <!-- 【v2.3】新增缩放比例指示器 -->
+    <span class="lb-zoom-label" id="lbZoomLabel"></span>
     <button class="lb-btn" id="lbDownload" title="下载 (D)">⬇</button>
     <button class="lb-btn" id="lbCopy" title="复制 Prompt (C)">📋</button>
     <button class="lb-btn" id="lbFill" title="回填参数 (R)">🔄</button>
@@ -157,23 +237,22 @@
     <button class="lb-btn" id="lbDelete" title="删除 (Del)">🗑</button>
     <button class="lb-btn" id="lbToggleMeta" title="元数据 (I)">ℹ</button>
   </div>
-
-  <!-- 导航箭头 -->
   <button class="lb-nav lb-prev" id="lbPrev">‹</button>
   <button class="lb-nav lb-next" id="lbNext">›</button>
-
-  <!-- 主图 -->
-  <img id="lightboxImg" src="" alt="full" />
-
-  <!-- 底部元数据面板 -->
+  <!-- 【v2.3】包裹在容器中以支持缩放和拖拽平移 -->
+  <div class="lb-img-wrap" id="lbImgWrap">
+    <img id="lightboxImg" src="" alt="full" />
+  </div>
   <div class="lb-meta" id="lbMeta">
     <div class="lb-prompt" id="lbPrompt"></div>
+    <!-- 【v2.3 新增】灯箱中显示 negative prompt -->
+    <div class="lb-neg-prompt" id="lbNegPrompt"></div>
     <div class="lb-params" id="lbParams"></div>
-    <div class="lb-thumbstrip" id="lbThumbstrip"></div>
   </div>
+  <!-- 【v2.3】缩略图条从元信息区分离，独立固定在底部 -->
+  <div class="lb-thumbstrip" id="lbThumbstrip"></div>
 </div>
 
-<!-- JS 模块入口 -->
 <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>

@@ -1,7 +1,11 @@
 /**
- * AnimaImagine 画廊视图模块。
- * Phase 1.1: 从 gallery.html 抽出的画廊渲染、过滤、增量更新逻辑。
- * Phase 3.1: 新增卡片操作栏、收藏按钮、批量选择。
+ * AnimaImagine v2 画廊视图模块。
+ *
+ * v2 变更：
+ * - 批量删除实际调用后端 API（不再是 TODO）
+ * - 删除后自动移除卡片 DOM
+ * - 收藏状态同步到 allImages 数据
+ * - 不再被 generator.js 直接 import loadData（通过事件解耦）
  */
 
 import { tagClass, escapeHtml, showToast } from './utils.js';
@@ -10,18 +14,13 @@ import { tagClass, escapeHtml, showToast } from './utils.js';
 // 状态
 // ============================================================
 
-let allImages = [];       // 全量元数据缓存
-let lastJsonString = '';  // 用于检测数据是否变化
-
-// 批量选择模式状态
+let allImages = [];
+let lastJsonString = '';
 let selectMode = false;
 const selectedPaths = new Set();
-let lastSelectedIndex = -1; // 用于 Shift+Click 范围选择
+let lastSelectedIndex = -1;
 
-// DOM 引用（在 init() 中设置）
 let galleryEl, datePickerEl, tagFilterEl, statsEl;
-
-// 外部回调（由 app.js 设置）
 let onOpenLightbox = null;
 let onFillGenerator = null;
 
@@ -41,10 +40,7 @@ export function init(options = {}) {
   datePickerEl.addEventListener('change', () => applyFilter());
   tagFilterEl.addEventListener('input', () => applyFilter());
 
-  // 批量选择模式初始化
   _initSelectMode();
-
-  // 初始加载 + 定时刷新
   loadData();
   setInterval(loadData, 30000);
 }
@@ -58,7 +54,8 @@ export async function loadData() {
     galleryEl.innerHTML = '<div class="loading">正在寻找精美画作...</div>';
   }
   try {
-    const resp = await fetch('/api/images');
+    // 【v2.3】limit 从默认 200 提高到 2000，让图库一次加载更多图片
+    const resp = await fetch('/api/images?limit=2000');
     if (resp.status === 401) { window.location.href = '/login'; return; }
     const data = await resp.json();
 
@@ -131,33 +128,29 @@ function renderAll(images) {
   statsEl.textContent = `${images.length} 张图片`;
 }
 
-// ============================================================
-// 卡片渲染（Phase 3.1: 新增操作栏、收藏、复选框）
-// ============================================================
-
 function renderCard(img, isFlash = false) {
   const date = img.date || '';
   const fn = img.filename || '';
   const relPath = `${date}/${fn}`;
   const thumbUrl = `/api/image?path=${encodeURIComponent(relPath)}&thumb=1`;
   const fullUrl = `/api/image?path=${encodeURIComponent(relPath)}`;
-
   const tags = (img.tags || []).slice(0, 20);
   const tagsHtml = tags.map(t =>
     `<span class="tag ${tagClass(t)}" data-tag="${escapeHtml(t)}" title="${escapeHtml(t)}">${escapeHtml(t)}</span>`
   ).join('');
-
   const isFav = img.favorited ? ' favorited' : '';
+  const favText = img.favorited ? '★' : '☆';
 
   return `
     <div class="card ${isFlash ? 'flash' : ''}" data-path="${escapeHtml(relPath)}">
       <div class="card-checkbox" data-path="${escapeHtml(relPath)}"></div>
-      <button class="card-fav${isFav}" data-path="${escapeHtml(relPath)}" title="收藏">☆</button>
+      <button class="card-fav${isFav}" data-path="${escapeHtml(relPath)}" title="收藏">${favText}</button>
       <img src="${thumbUrl}" alt="" loading="lazy" data-full="${fullUrl}" />
       <div class="card-actions">
         <button class="card-action-btn" data-action="download" data-url="${fullUrl}" title="下载">⬇</button>
         <button class="card-action-btn" data-action="copy" data-prompt="${escapeHtml(img.prompt || '')}" title="复制 Prompt">📋</button>
         <button class="card-action-btn" data-action="fill" data-path="${escapeHtml(relPath)}" title="回填参数">🔄</button>
+        <button class="card-action-btn" data-action="delete" data-path="${escapeHtml(relPath)}" title="删除">🗑</button>
       </div>
       <div class="info">
         <div class="tags">${tagsHtml}</div>
@@ -173,12 +166,11 @@ function renderCard(img, isFlash = false) {
 }
 
 // ============================================================
-// 事件委托（统一在 gallery 容器上监听）
+// 事件委托
 // ============================================================
 
 export function setupGalleryEvents() {
   galleryEl.addEventListener('click', (e) => {
-    // 标签点击过滤
     const tagEl = e.target.closest('.tag');
     if (tagEl) {
       tagFilterEl.value = tagEl.dataset.tag || tagEl.textContent;
@@ -186,7 +178,6 @@ export function setupGalleryEvents() {
       return;
     }
 
-    // 收藏按钮
     const favBtn = e.target.closest('.card-fav');
     if (favBtn) {
       e.stopPropagation();
@@ -194,7 +185,6 @@ export function setupGalleryEvents() {
       return;
     }
 
-    // 卡片操作栏按钮
     const actionBtn = e.target.closest('.card-action-btn');
     if (actionBtn) {
       e.stopPropagation();
@@ -202,7 +192,6 @@ export function setupGalleryEvents() {
       return;
     }
 
-    // 批量选择模式下的复选框
     const checkbox = e.target.closest('.card-checkbox');
     if (checkbox && selectMode) {
       e.stopPropagation();
@@ -210,7 +199,6 @@ export function setupGalleryEvents() {
       return;
     }
 
- // 选择模式下点击卡片也切换选中
     if (selectMode) {
       const card = e.target.closest('.card');
       if (card) {
@@ -220,7 +208,6 @@ export function setupGalleryEvents() {
       }
     }
 
-    // 普通模式：点击图片打开 Lightbox
     const img = e.target.closest('.card img');
     if (img && onOpenLightbox) {
       const card = img.closest('.card');
@@ -229,7 +216,7 @@ export function setupGalleryEvents() {
     }
   });
 
-  // 长按进入选择模式（移动端）
+  // 长按进入选择模式
   let longPressTimer = null;
   galleryEl.addEventListener('pointerdown', (e) => {
     const card = e.target.closest('.card');
@@ -260,6 +247,9 @@ async function _toggleFavorite(btn) {
     if (resp.ok) {
       btn.classList.toggle('favorited');
       btn.textContent = btn.classList.contains('favorited') ? '★' : '☆';
+      // v2: 同步到 allImages 数据，保证 Lightbox 和卡片状态一致
+      const img = allImages.find(i => `${i.date}/${i.filename}` === path);
+      if (img) img.favorited = !isFav;
     }
   } catch (err) {
     showToast('收藏失败: ' + err.message, 'error');
@@ -277,8 +267,7 @@ function _handleCardAction(btn) {
       break;
     }
     case 'copy': {
-      const prompt = btn.dataset.prompt;
-      navigator.clipboard.writeText(prompt).then(() => {
+      navigator.clipboard.writeText(btn.dataset.prompt).then(() => {
         showToast('✅ Prompt 已复制到剪贴板', 'success');
       });
       break;
@@ -289,25 +278,61 @@ function _handleCardAction(btn) {
       if (img && onFillGenerator) onFillGenerator(img);
       break;
     }
+    // v2: 单张删除（从卡片操作栏）
+    case 'delete': {
+      const path = btn.dataset.path;
+      if (confirm('确定删除这张图片？')) {
+        _deleteImages([path]);
+      }
+      break;
+    }
+  }
+}
+
+/**
+ * v2: 调用后端 API 删除图片 + 移除卡片 DOM。
+ * 解决 v1 中删除按钮存在但实际是 TODO 的问题。
+ */
+async function _deleteImages(paths) {
+  try {
+    const resp = await fetch('/api/image/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths }),
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      const deletedSet = new Set(data.deleted || []);
+      // 从 allImages 移除
+      allImages = allImages.filter(i => {
+        const id = `${i.date}/${i.filename}`.replace('.png', '');
+        return !deletedSet.has(id);
+      });
+      // 从 DOM 移除卡片
+      for (const path of paths) {
+        const card = galleryEl.querySelector(`.card[data-path="${CSS.escape(path)}"]`);
+        if (card) card.remove();
+      }
+      lastJsonString = ''; // 强制下次刷新
+      showToast(`✅ 已删除 ${data.count || paths.length} 张`, 'success');
+    }
+  } catch (err) {
+    showToast('删除失败: ' + err.message, 'error');
   }
 }
 
 // ============================================================
-// 批量选择模式（Phase 4.1）
+// 批量选择模式
 // ============================================================
 
 function _initSelectMode() {
-  // 选择模式工具栏事件
   document.getElementById('selClose')?.addEventListener('click', _exitSelectMode);
   document.getElementById('selAll')?.addEventListener('click', _selectAll);
   document.getElementById('selDownload')?.addEventListener('click', _batchDownload);
   document.getElementById('selCopy')?.addEventListener('click', _batchCopy);
   document.getElementById('selDelete')?.addEventListener('click', _batchDelete);
-
-  // header 上的“选择”按钮
   document.getElementById('enterSelectMode')?.addEventListener('click', _enterSelectMode);
 
-  // Ctrl+A 全选 / Esc 退出
   document.addEventListener('keydown', (e) => {
     if (!selectMode) return;
     if (e.key === 'Escape') { _exitSelectMode(); e.preventDefault(); }
@@ -329,7 +354,6 @@ function _exitSelectMode() {
   selectedPaths.clear();
   lastSelectedIndex = -1;
   document.body.classList.remove('select-mode');
-  // 清除所有选中状态
   document.querySelectorAll('.card-checkbox.checked').forEach(cb => {
     cb.classList.remove('checked');
     cb.textContent = '';
@@ -341,7 +365,6 @@ function _toggleCardSelection(checkbox, event) {
   const path = checkbox.dataset.path;
   const card = checkbox.closest('.card');
 
-  // Shift+Click 范围选择
   if (event.shiftKey && lastSelectedIndex >= 0) {
     const cards = Array.from(galleryEl.querySelectorAll('.card'));
     const currentIndex = cards.indexOf(card);
@@ -363,7 +386,6 @@ function _toggleCardSelection(checkbox, event) {
     }
   }
 
-  // 普通切换
   if (selectedPaths.has(path)) {
     selectedPaths.delete(path);
     checkbox.classList.remove('checked');
@@ -378,16 +400,12 @@ function _toggleCardSelection(checkbox, event) {
 
   const cards = Array.from(galleryEl.querySelectorAll('.card'));
   lastSelectedIndex = cards.indexOf(card);
-
   _updateSelectCount();
-
-  // 全部取消后自动退出
   if (selectedPaths.size === 0) _exitSelectMode();
 }
 
 function _selectAll() {
-  const cards = galleryEl.querySelectorAll('.card');
-  cards.forEach(card => {
+  galleryEl.querySelectorAll('.card').forEach(card => {
     const cb = card.querySelector('.card-checkbox');
     const path = cb?.dataset.path;
     if (path) {
@@ -407,7 +425,6 @@ function _updateSelectCount() {
 
 async function _batchDownload() {
   if (selectedPaths.size === 0) return;
-  // 少量图片逐个触发下载
   if (selectedPaths.size <= 5) {
     for (const path of selectedPaths) {
       const a = document.createElement('a');
@@ -418,7 +435,13 @@ async function _batchDownload() {
     }
   } else {
     showToast(`批量下载 ${selectedPaths.size} 张，请稍候...`, 'info');
-    // TODO: 后端打包下载 API
+    for (const path of selectedPaths) {
+      const a = document.createElement('a');
+      a.href = `/api/image?path=${encodeURIComponent(path)}`;
+      a.download = '';
+      a.click();
+      await new Promise(r => setTimeout(r, 300));
+    }
   }
 }
 
@@ -434,16 +457,16 @@ function _batchCopy() {
   });
 }
 
+// v2: 批量删除实际调用后端 API（不再是 TODO）
 async function _batchDelete() {
   if (selectedPaths.size === 0) return;
   if (!confirm(`确定删除 ${selectedPaths.size} 张图片？`)) return;
-  showToast(`正在删除 ${selectedPaths.size} 张...`, 'info');
-  // TODO: 调用后端删除 API
+  await _deleteImages(Array.from(selectedPaths));
   _exitSelectMode();
 }
 
 // ============================================================
-// 导出当前过滤后的图片列表（供 Lightbox 用）
+// 导出
 // ============================================================
 
 export function getFilteredImages() {

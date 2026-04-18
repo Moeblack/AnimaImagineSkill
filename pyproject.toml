@@ -1,7 +1,7 @@
 [project]
 name = "anima-imagine-skill"
-version = "0.1.0"
-description = "AnimaImagineSkill — Standalone Anima anime/illustration MCP server with gallery"
+version = "2.0.0"
+description = "AnimaImagineSkill v2 — Standalone Anima anime/illustration MCP server with gallery"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 # 与 README 同步：要求 Python ≥ 3.13（DiffSynth + fastmcp 最新特性需要 3.13+）
@@ -51,7 +51,7 @@ Issues = "https://github.com/Moeblack/AnimaImagineSkill/issues"
 
 [project.scripts]
 # 命令行入口: anima-imagine 即可启动服务
-anima-imagine = "anima_imagine.server:main"
+anima-imagine = "anima_imagine.main:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]
@@ -60,9 +60,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
-# gallery.html 等非 Python 文件必须显式声明，否则 wheel 打包不会包含它们
+# v2: 修复 package-data，确保 HTML/CSS/JS/CSV 等非 Python 文件都能被打包
 [tool.setuptools.package-data]
-anima_imagine = ["*.html"]
+anima_imagine = ["*.html", "static/**/*"]
 
 # ============================================================
 # PyTorch CUDA 版本配置（uv sync 时生效）

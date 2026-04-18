@@ -1,0 +1,32 @@
+# AnimaImagineSkill v2 Docker Compose
+#
+# 用法：
+#   1. 复制 config.example.yaml 为 config.yaml 并修改
+#   2. docker compose up -d
+#
+# 模型文件放在 ./models 目录下，或用环境变量覆盖。
+
+services:
+  anima:
+    build: .
+    image: anima-imagine:latest
+    container_name: anima-imagine
+    restart: unless-stopped
+    ports:
+      - "${ANIMA_PORT:-8000}:8000"
+    volumes:
+      # 模型目录（必须预下载）
+      - ./models:/app/models:ro
+      # 输出目录（含生成图片 + SQLite 数据库）
+      - ./output:/app/output
+      # 配置文件
+      - ./config.yaml:/app/config.yaml:ro
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
