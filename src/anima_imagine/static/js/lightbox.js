@@ -17,6 +17,13 @@ let onFillGenerator = null;
 
 let lbRoot, lbImg, lbImgWrap, lbPrompt, lbNegPrompt, lbParams, lbThumbstrip, lbZoomLabel;
 
+function isEditableTarget(target) {
+  if (!target) return false;
+  if (target.isContentEditable) return true;
+  if (target.closest?.('[contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]')) return true;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+}
+
 // ============================================================
 // 缩放/平移状态
 // ============================================================
@@ -59,6 +66,7 @@ export function init(options = {}) {
 
   document.addEventListener('keydown', (e) => {
     if (!lbRoot.classList.contains('active')) return;
+    if (isEditableTarget(document.activeElement)) return;
     switch (e.key) {
       case 'Escape':     close(); e.preventDefault(); break;
       case 'ArrowLeft':  navigate(-1); e.preventDefault(); break;
@@ -78,6 +86,8 @@ export function init(options = {}) {
 
   _initUIAutoHide();
   _initZoomPan();
+  // 【v3.0】手机端 touch 手势：滑动切换、双指缩放、防后退
+  _initTouchGestures();
 }
 
 // ============================================================
@@ -95,6 +105,8 @@ function _showUI() {
 function _initUIAutoHide() {
   lbRoot.addEventListener('mousemove', _showUI);
   lbRoot.addEventListener('click', _showUI);
+  // 【v3.0】手机端也需要 touch 触发 UI 显示
+  lbRoot.addEventListener('touchstart', _showUI);
 }
 
 // ============================================================
@@ -224,6 +236,9 @@ export function open(path, images) {
   _resetZoom();
   _show(currentIndex);
   lbRoot.classList.add('active');
+  // 【v3.0】阻止手机端浏览器后退手势和默认 touch 行为
+  document.body.style.overscrollBehavior = 'none';
+  lbImgWrap.style.touchAction = 'none';
   // 【v2.3】打开时默认不显示元数据，需要手动按 ℹ
   metaExpanded = false;
   lbRoot.classList.remove('meta-visible');
@@ -231,6 +246,9 @@ export function open(path, images) {
 
 export function close() {
   lbRoot.classList.remove('active');
+  // 【v3.0】恢复 touch 行为
+  document.body.style.overscrollBehavior = '';
+  lbImgWrap.style.touchAction = '';
   lbRoot.classList.remove('ui-visible');
   lbRoot.classList.remove('meta-visible');
   clearTimeout(_uiTimer);
@@ -376,4 +394,86 @@ function _toggleMeta() {
   metaExpanded = !metaExpanded;
   // 【v2.3】用 class 控制元数据显示，点击 ℹ 按钮切换，不随鼠标自动出现
   lbRoot.classList.toggle('meta-visible', metaExpanded);
+}
+
+
+// ============================================================
+// 【v3.0 新增】手机端 touch 手势
+// - 单指左右滑动：未缩放时切换图片
+// - 双指 pinch：缩放图片
+// - 阻止浏览器默认后退手势（通过 preventDefault）
+// ============================================================
+let _touchStartX = 0, _touchStartY = 0, _touchStartTime = 0;
+let _touchCount = 0;
+let _pinchStartDist = 0, _pinchStartScale = 1;
+let _isSwiping = false;
+
+function _initTouchGestures() {
+  lbImgWrap.addEventListener('touchstart', (e) => {
+    _touchCount = e.touches.length;
+    if (_touchCount === 1) {
+      // 单指：记录起始位置，用于 swipe 检测
+      _touchStartX = e.touches[0].clientX;
+      _touchStartY = e.touches[0].clientY;
+      _touchStartTime = Date.now();
+      _isSwiping = false;
+    } else if (_touchCount === 2) {
+      // 双指：记录初始距离，用于 pinch-to-zoom
+      _pinchStartDist = _getTouchDist(e.touches);
+      _pinchStartScale = scale;
+      e.preventDefault(); // 阻止浏览器默认缩放
+    }
+  }, { passive: false });
+
+  lbImgWrap.addEventListener('touchmove', (e) => {
+    e.preventDefault(); // 【v3.0】阻止浏览器后退手势和页面滚动
+
+    if (e.touches.length === 2) {
+      // 双指缩放
+      const newDist = _getTouchDist(e.touches);
+      if (_pinchStartDist > 0) {
+        const factor = newDist / _pinchStartDist;
+        const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        // 直接设置目标缩放比例，避免累积误差
+        const targetScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, _pinchStartScale * factor));
+        if (Math.abs(targetScale - scale) > 0.01) {
+          _zoomAt(midX, midY, targetScale / scale);
+        }
+      }
+      return;
+    }
+
+    if (e.touches.length === 1 && scale <= 1.01) {
+      // 单指未缩放：检测水平滑动距离
+      const dx = e.touches[0].clientX - _touchStartX;
+      if (Math.abs(dx) > 20) _isSwiping = true;
+    }
+  }, { passive: false });
+
+  lbImgWrap.addEventListener('touchend', (e) => {
+    if (_touchCount === 1 && scale <= 1.01) {
+      // 单指 swipe 检测
+      const dt = Date.now() - _touchStartTime;
+      const endX = e.changedTouches[0].clientX;
+      const dx = endX - _touchStartX;
+      const dy = e.changedTouches[0].clientY - _touchStartY;
+      // 水平位移 > 50px，耗时 < 500ms，且水平位移大于垂直位移
+      if (Math.abs(dx) > 50 && dt < 500 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        if (dx > 0) navigate(-1); // 右滑 = 上一张
+        else navigate(1);          // 左滑 = 下一张
+      }
+    }
+    // 重置 pinch 状态
+    _pinchStartDist = 0;
+    _touchCount = 0;
+    _isSwiping = false;
+  });
+}
+
+/** 计算两个触摸点之间的距离 */
+function _getTouchDist(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.sqrt(dx * dx + dy * dy);
 }

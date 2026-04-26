@@ -18,7 +18,8 @@ from pathlib import Path
 from anima_imagine.domain.models import ImageRecord
 
 # 数据库 schema 版本，将来迁移用
-_SCHEMA_VERSION = 2
+# 【v3.0】版本升至 3，新增 user_preferences 表
+_SCHEMA_VERSION = 3
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS images (
@@ -50,6 +51,14 @@ CREATE INDEX IF NOT EXISTS idx_created_at ON images(created_at DESC);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT
+);
+
+-- 【v3.0 新增】用户偏好表，存储提示词缓存/预设/自定义标签等，
+-- 实现全平台同步（所有设备共享同一份 SQLite 数据库）。
+CREATE TABLE IF NOT EXISTS user_preferences (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL DEFAULT '',
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 """
 
@@ -85,13 +94,25 @@ class ImageDB:
                 self._migrate(current_ver)
 
     def _migrate(self, from_ver: int):
-        """【v2.3】增量迁移数据库 schema。"""
+        """【v3.0】增量迁移数据库 schema。"""
         if from_ver < 2:
             # v2 → v2: 增加 adv_fields_json 列，保存高级模式各字段原始值
             try:
                 self._conn.execute("ALTER TABLE images ADD COLUMN adv_fields_json TEXT DEFAULT ''")
             except Exception:
                 pass  # 列已存在（比如从新 CREATE_SQL 创建的库）
+        if from_ver < 3:
+            # 【v3.0】新增 user_preferences 表
+            try:
+                self._conn.execute("""
+                    CREATE TABLE IF NOT EXISTS user_preferences (
+                        key        TEXT PRIMARY KEY,
+                        value      TEXT NOT NULL DEFAULT '',
+                        updated_at TEXT DEFAULT (datetime('now'))
+                    )
+                """)
+            except Exception:
+                pass  # 表已存在
         self._conn.execute(
             "UPDATE meta SET value=? WHERE key='schema_version'",
             (str(_SCHEMA_VERSION),),
@@ -158,16 +179,12 @@ class ImageDB:
         limit: int = 200,
         offset: int = 0,
         favorited_only: bool = False,
+        tag: str | None = None,
     ) -> list[dict]:
         """查询图片列表，新的在前。"""
-        clauses = ["deleted=0"]
-        params: list = []
-        if date:
-            clauses.append("date=?")
-            params.append(date)
-        if favorited_only:
-            clauses.append("favorited=1")
-        where = " AND ".join(clauses)
+        # 前端性能优化：复用统一 WHERE 构造，在分页之前完成日期、收藏和标签过滤。
+        # 这样 gallery-view.js 可以小批量请求，不再为了筛选而把全部图片塞进 DOM 和内存。
+        where, params = self._gallery_where(date=date, favorited_only=favorited_only, tag=tag)
         params.extend([limit, offset])
         rows = self._conn.execute(
             f"SELECT * FROM images WHERE {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
@@ -182,13 +199,9 @@ class ImageDB:
         ).fetchall()
         return [r["date"] for r in rows]
 
-    def count(self, date: str | None = None) -> int:
-        clauses = ["deleted=0"]
-        params: list = []
-        if date:
-            clauses.append("date=?")
-            params.append(date)
-        where = " AND ".join(clauses)
+    def count(self, date: str | None = None, favorited_only: bool = False, tag: str | None = None) -> int:
+        # 与 list_images 共享同一套过滤条件，目的在于让前端分页统计和实际列表始终一致。
+        where, params = self._gallery_where(date=date, favorited_only=favorited_only, tag=tag)
         row = self._conn.execute(
             f"SELECT COUNT(*) as c FROM images WHERE {where}", params
         ).fetchone()
@@ -269,6 +282,27 @@ class ImageDB:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _gallery_where(
+        date: str | None = None,
+        favorited_only: bool = False,
+        tag: str | None = None,
+    ) -> tuple[str, list]:
+        """构造图库查询 WHERE 子句。"""
+        clauses = ["deleted=0"]
+        params: list = []
+        if date:
+            clauses.append("date=?")
+            params.append(date)
+        if favorited_only:
+            clauses.append("favorited=1")
+        if tag:
+            # 前端性能优化：用 SQLite instr(lower(tags_json), ?) 表达原先 JS includes 的子串匹配。
+            # 目的不是做搜索引擎，而是把已有标签过滤语义下推到数据库分页之前，减少传输和 DOM 压力。
+            clauses.append("instr(LOWER(tags_json), ?) > 0")
+            params.append(tag.lower())
+        return " AND ".join(clauses), params
+
+    @staticmethod
     def _row_to_dict(row: sqlite3.Row) -> dict:
         d = dict(row)
         d["favorited"] = bool(d.get("favorited", 0))
@@ -284,6 +318,58 @@ class ImageDB:
         except (json.JSONDecodeError, TypeError):
             d["adv_fields"] = {}
         return d
+
+
+    # ------------------------------------------------------------------
+    # 【v3.0 新增】用户偏好 CRUD
+    # 用于实现提示词缓存/预设/自定义标签的全平台同步。
+    # ------------------------------------------------------------------
+
+    def get_preference(self, key: str) -> str | None:
+        """获取单个偏好。不存在返回 None。"""
+        row = self._conn.execute(
+            "SELECT value FROM user_preferences WHERE key=?", (key,)
+        ).fetchone()
+        return row["value"] if row else None
+
+    def set_preference(self, key: str, value: str) -> None:
+        """设置单个偏好（upsert）。"""
+        self._conn.execute(
+            """INSERT INTO user_preferences(key, value, updated_at)
+               VALUES(?, ?, datetime('now'))
+               ON CONFLICT(key) DO UPDATE SET
+                   value=excluded.value,
+                   updated_at=excluded.updated_at""",
+            (key, value),
+        )
+        self._conn.commit()
+
+    def get_preferences(self, keys: list[str]) -> dict[str, str]:
+        """批量获取偏好。返回 {key: value}，不存在的 key 不包含。"""
+        if not keys:
+            return {}
+        placeholders = ",".join("?" * len(keys))
+        rows = self._conn.execute(
+            f"SELECT key, value FROM user_preferences WHERE key IN ({placeholders})",
+            keys,
+        ).fetchall()
+        return {r["key"]: r["value"] for r in rows}
+
+    def list_preferences_by_prefix(self, prefix: str) -> dict[str, str]:
+        """按前缀查找偏好（如 'presets_' 获取所有字段预设）。"""
+        rows = self._conn.execute(
+            "SELECT key, value FROM user_preferences WHERE key LIKE ?",
+            (prefix + "%",),
+        ).fetchall()
+        return {r["key"]: r["value"] for r in rows}
+
+    def delete_preference(self, key: str) -> bool:
+        """删除单个偏好。返回是否存在。"""
+        cur = self._conn.execute(
+            "DELETE FROM user_preferences WHERE key=?", (key,)
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
 
     def close(self):
         self._conn.close()

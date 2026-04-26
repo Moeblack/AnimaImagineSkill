@@ -25,14 +25,16 @@ class GalleryService:
         limit: int = 200,
         offset: int = 0,
         favorited_only: bool = False,
+        tag: str | None = None,
     ) -> dict:
         """v2: 从 SQLite 查询图片列表。不再扫描 JSON 文件。"""
+        # 前端性能优化：标签过滤在分页前由 SQLite 执行，目的在于避免浏览器一次拉取全量图库。
         images = self.db.list_images(
             date=date, limit=limit, offset=offset,
-            favorited_only=favorited_only,
+            favorited_only=favorited_only, tag=tag,
         )
         dates = self.db.list_dates()
-        total = self.db.count(date=date)
+        total = self.db.count(date=date, favorited_only=favorited_only, tag=tag)
         return {
             "dates": dates,
             "images": images,
@@ -75,10 +77,16 @@ class GalleryService:
         return self.storage.resolve_path(rel_path)
 
     def get_thumb_path(self, rel_path: str) -> Path | None:
-        """v2: 解析缩略图路径。"""
+        """v3.0: 解析缩略图路径，优先 .webp 再 fallback .jpg（兼容旧缩略图）。"""
         parts = rel_path.rsplit("/", 1)
         if len(parts) == 2:
+            # 【v3.0】优先查找 .webp 缩略图
+            webp_rel = f"{parts[0]}/thumbs/{parts[1].replace('.png', '.webp')}"
+            webp_path = self.storage.resolve_path(webp_rel)
+            if webp_path:
+                return webp_path
+            # fallback：兼容旧的 .jpg 缩略图
             thumb_rel = f"{parts[0]}/thumbs/{parts[1].replace('.png', '.jpg')}"
+            return self.storage.resolve_path(thumb_rel)
         else:
             return None
-        return self.storage.resolve_path(thumb_rel)

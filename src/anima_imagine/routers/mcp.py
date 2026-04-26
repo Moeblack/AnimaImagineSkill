@@ -30,6 +30,7 @@ def register_mcp_tools(mcp, gen_service, codex, cfg):
         artist: str = "",
         style: str = "",
         environment: str = "",
+        others: str = "",
         nl_caption: str = "",
         neg: str = DEFAULT_NEG,
         seed: int = -1,
@@ -43,7 +44,7 @@ def register_mcp_tools(mcp, gen_service, codex, cfg):
 
         Server auto-joins fields into Anima prompt order:
         [quality] [count] [character] [series] [artist] [appearance] [outfit]
-        [pose_expression] [composition] [environment] [style] [nl_caption]
+        [pose_expression] [composition] [environment] [style] [others] [nl_caption]
         """
         from anima_imagine.schemas.schemas import GenerateRequest
 
@@ -68,6 +69,7 @@ def register_mcp_tools(mcp, gen_service, codex, cfg):
             artist=artist,
             style=style,
             environment=environment,
+            others=others,
             nl_caption=nl_caption,
         )
         job = gen_service.submit_job(req)

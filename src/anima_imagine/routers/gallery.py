@@ -29,6 +29,8 @@ def register_gallery_routes(mcp, gallery_service, cfg):
             limit=query.limit,
             offset=query.offset,
             favorited_only=query.favorited_only,
+            # 前端性能优化：路由把通用 tag 查询参数透传到服务层，目的在于分页前完成过滤。
+            tag=query.tag,
         )
         return JSONResponse(result)
 

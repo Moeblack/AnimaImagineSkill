@@ -1,29 +1,9 @@
-/**
- * AnimaImagine v2.2 — Tag Pill Input
- *
- * 多行、auto-grow、pill 可点击编辑、带删除按钮、可拖动排序。
- * 不依赖任何三方库（Tagify ~50KB，我们只需 4KB）。
- *
- * 使用场景：高级模式下每个语义槽位（appearance / outfit / artist 等）都是一个 PillInput。
- * 用户输入 “, ” 或 Enter → 提交成一个 pill。
- * 点击 pill → 进入编辑态，再提交会回到原位。
- * Backspace 且输入区为空 → 抓起最后一个 pill 进编辑态。
- */
+import { escapeHtml, showToast } from './utils.js';
 
-import { escapeHtml } from './utils.js';
+let activeContextMenu = null;
+let activeContextCleanup = null;
 
-// 表示一个 pill input 实例的状态。
 export class PillInput {
-  /**
-   * @param {HTMLElement} root 容器元素（一个空 div）
-   * @param {Object} opts
-   * @param {string} opts.placeholder
-   * @param {string} [opts.category] 'general' | 'artist' | 'character' | 'series' | 'meta'
-   *        会记在 dataset.category 上，供 autocomplete 过滤、供 CSS 变色。
-   * @param {string} [opts.value] 初始值（逗号分隔）
-   * @param {boolean} [opts.singleLine] true 则只许一行（用于 quality / count）
-   * @param {(value:string)=>void} [opts.onChange]
-   */
   constructor(root, opts = {}) {
     this.root = root;
     this.opts = opts;
@@ -31,25 +11,22 @@ export class PillInput {
     this.placeholder = opts.placeholder || '';
     this.singleLine = !!opts.singleLine;
     this.onChange = opts.onChange || (() => {});
+    this.editingPill = null;
 
     this._build();
     if (opts.value) this.setValue(opts.value);
   }
 
-  // ----------------------------------------------------------
-  // DOM
-  // ----------------------------------------------------------
   _build() {
     this.root.classList.add('pill-input');
     if (this.singleLine) this.root.classList.add('pill-input-single');
     this.root.dataset.category = this.category;
+    this.root.dataset.opsHint = '左拖动 · 中间单击复制 / 双击编辑 · 右删除';
 
-    // editor: contenteditable plaintext。始终是容器内最后一个子节点。
     this.editor = document.createElement('span');
     this.editor.className = 'pill-editor';
     this.editor.contentEditable = 'plaintext-only';
     this.editor.setAttribute('spellcheck', 'false');
-    // contenteditable="plaintext-only" 在 Firefox 可能被降级为 true，都能用
 
     this.placeholderEl = document.createElement('span');
     this.placeholderEl.className = 'pill-placeholder';
@@ -58,18 +35,16 @@ export class PillInput {
     this.root.appendChild(this.placeholderEl);
     this.root.appendChild(this.editor);
 
-    // 点击容器空白处 → 聚焦 editor
-    this.root.addEventListener('mousedown', (e) => {
-      if (e.target === this.root || e.target === this.placeholderEl) {
-        e.preventDefault();
+    this.root.addEventListener('mousedown', (event) => {
+      if (event.target === this.root || event.target === this.placeholderEl) {
+        event.preventDefault();
         this._focusEditorAtEnd();
       }
     });
 
-    this.editor.addEventListener('keydown', (e) => this._onKeydown(e));
+    this.editor.addEventListener('keydown', (event) => this._onKeydown(event));
     this.editor.addEventListener('input', () => this._refreshPlaceholder());
     this.editor.addEventListener('blur', () => {
-      // 失焦时提交未完成的 pill，但要给 autocomplete 点击一点时间
       setTimeout(() => {
         if (document.activeElement !== this.editor) {
           this._commitEditor();
@@ -86,141 +61,266 @@ export class PillInput {
     const range = document.createRange();
     range.selectNodeContents(this.editor);
     range.collapse(false);
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    sel.addRange(range);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
   }
 
   _refreshPlaceholder() {
     const hasPills = this.root.querySelector('.pill') !== null;
     const editorEmpty = !this.editor.textContent.trim();
-    this.placeholderEl.style.display = (hasPills || !editorEmpty) ? 'none' : 'inline';
+    this.placeholderEl.style.display = hasPills || !editorEmpty ? 'none' : 'inline';
+    this.root.classList.toggle('pill-input-has-pills', hasPills);
   }
 
-  // ----------------------------------------------------------
-  // 键盘事件
-  // ----------------------------------------------------------
-  _onKeydown(e) {
-    // 补全导航交给 autocomplete 处理（它听同一个 editor）
-    // 这里只管：逗号 / 回车 / 退格 / Tab带补全交给 ac
-
-    if (e.key === ',' || e.key === '\uff0c') {
-      e.preventDefault();
+  _onKeydown(event) {
+    if (event.key === ',' || event.key === '，') {
+      event.preventDefault();
       this._commitEditor();
       return;
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      // \u3010v2.3 \u4fee\u590d\u3011Enter \u65f6\u5ef6\u8fdf\u63d0\u4ea4\uff0c\u8ba9 autocomplete \u7684 keydown \u5148\u6267\u884c\u3002
-      // \u5982\u679c autocomplete \u9009\u4e2d\u4e86\u8865\u5168\u9879\uff0c\u5b83\u4f1a\u5148\u6e05\u7a7a editor \u5e76\u63d2\u5165 pill\uff0c
-      // \u4e4b\u540e _commitEditor \u53d1\u73b0\u7f16\u8f91\u5668\u4e3a\u7a7a\u5c31\u4f1a\u8df3\u8fc7\uff0c\u907f\u514d\u91cd\u590d\u751f\u6210 pill\u3002
+
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
       setTimeout(() => this._commitEditor(), 0);
       return;
     }
 
-
-    if (e.key === 'Backspace') {
-      // editor 为空 → 抓起最后一个 pill 进编辑态
-      const sel = window.getSelection();
+    if (event.key === 'Backspace') {
+      const selection = window.getSelection();
       const text = this.editor.textContent;
-      if (!text && sel.anchorOffset === 0) {
+      if (!text && selection.anchorOffset === 0) {
         const pills = this.root.querySelectorAll('.pill');
         if (pills.length) {
-          e.preventDefault();
+          event.preventDefault();
           this._editPill(pills[pills.length - 1]);
         }
       }
     }
   }
 
-  // ----------------------------------------------------------
-  // pill 提交 / 编辑 / 删除
-  // ----------------------------------------------------------
   _commitEditor() {
     const raw = this.editor.textContent.trim();
     if (!raw) return;
-    // 可能一次粘贴了多个 tag
-    const parts = raw.split(/[,\n，]/).map(s => s.trim()).filter(Boolean);
+
+    const parts = splitTags(raw);
     this.editor.textContent = '';
-    parts.forEach(p => this._insertPillBefore(p, this.editor));
+    parts.forEach((part) => this._insertPillBefore(part, this.editor));
     this._fireChange();
     this._refreshPlaceholder();
   }
 
-  /** 从 DOM 将指定 pill 转回编辑态（文本在 editor 中，光标居末） */
   _editPill(pillEl) {
-    const text = pillEl.dataset.value;
-    pillEl.remove();
-    this.editor.textContent = text;
-    this._focusEditorAtEnd();
-    this._fireChange();
+    if (!pillEl || pillEl.classList.contains('editing')) {
+      pillEl?.querySelector('.pill-edit-input')?.focus();
+      return;
+    }
+
+    closeContextMenu();
+
+    if (this.editingPill && this.editingPill !== pillEl) {
+      this._finishPillEdit(this.editingPill, { save: true });
+    }
+
+    const currentValue = pillEl.dataset.value || '';
+    pillEl.classList.add('editing');
+    pillEl.setAttribute('draggable', 'false');
+
+    const copyButton = pillEl.querySelector('.pill-copy');
+    copyButton.hidden = true;
+
+    const editInput = document.createElement('input');
+    editInput.type = 'text';
+    editInput.className = 'pill-edit-input';
+    editInput.value = currentValue;
+
+    pillEl.insertBefore(editInput, pillEl.querySelector('.pill-remove'));
+    this.editingPill = pillEl;
+
+    const commit = () => this._finishPillEdit(pillEl, { save: true });
+    const cancel = () => this._finishPillEdit(pillEl, { save: false });
+
+    editInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        commit();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        cancel();
+      }
+    });
+
+    editInput.addEventListener('blur', () => {
+      setTimeout(() => {
+        if (document.activeElement !== editInput) {
+          commit();
+        }
+      }, 100);
+    });
+
+    editInput.focus();
+    editInput.select();
+  }
+
+  _finishPillEdit(pillEl, { save }) {
+    if (!pillEl) return;
+
+    const editInput = pillEl.querySelector('.pill-edit-input');
+    if (!editInput) return;
+
+    const originalValue = pillEl.dataset.value || '';
+    const nextValue = save ? editInput.value.trim() : originalValue;
+
+    editInput.remove();
+    pillEl.querySelector('.pill-copy').hidden = false;
+    pillEl.classList.remove('editing');
+    pillEl.setAttribute('draggable', 'true');
+
+    if (this.editingPill === pillEl) {
+      this.editingPill = null;
+    }
+
+    if (!nextValue) {
+      pillEl.remove();
+      this._fireChange();
+      this._refreshPlaceholder();
+      return;
+    }
+
+    if (nextValue !== originalValue) {
+      pillEl.dataset.value = nextValue;
+      pillEl.dataset.category = detectPillCategory(nextValue, this.category);
+
+      const copyButton = pillEl.querySelector('.pill-copy');
+      copyButton.title = getCopyTitle(nextValue);
+      pillEl.querySelector('.pill-copy-text').textContent = nextValue;
+
+      this._fireChange();
+    }
+
     this._refreshPlaceholder();
   }
 
   _removePill(pillEl) {
+    closeContextMenu();
+    if (this.editingPill === pillEl) {
+      this.editingPill = null;
+    }
     pillEl.remove();
     this._fireChange();
     this._refreshPlaceholder();
   }
 
-  /** 在指定节点前插入一个 pill。 */
   _insertPillBefore(text, beforeNode) {
-    text = text.trim();
-    if (!text) return;
+    const value = text.trim();
+    if (!value) return;
+
     const pill = document.createElement('span');
     pill.className = 'pill';
-    pill.dataset.value = text;
-    pill.dataset.category = _detectPillCategory(text, this.category);
+    pill.dataset.value = value;
+    pill.dataset.category = detectPillCategory(value, this.category);
     pill.setAttribute('draggable', 'true');
-    pill.innerHTML = `<span class="pill-text">${escapeHtml(text)}</span><button type="button" class="pill-remove" tabindex="-1">×</button>`;
+    pill.innerHTML = `
+      <button type="button" class="pill-drag-handle" title="按住这里拖动排序" aria-label="拖动排序">
+        <span class="pill-drag-grip" aria-hidden="true">::</span>
+      </button>
+      <button type="button" class="pill-copy">
+        <span class="pill-copy-text">${escapeHtml(value)}</span>
+      </button>
+      <button type="button" class="pill-remove" tabindex="-1" title="删除">x</button>
+    `;
 
-    // 点击 pill 主体 → 进编辑
-    pill.querySelector('.pill-text').addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      this._editPill(pill);
+    const copyButton = pill.querySelector('.pill-copy');
+    const removeButton = pill.querySelector('.pill-remove');
+    const dragHandle = pill.querySelector('.pill-drag-handle');
+    copyButton.title = getCopyTitle(value);
+
+    let clickTimer = 0;
+    let suppressCopyClick = false;
+    let lastClickAt = 0;
+
+    copyButton.addEventListener('click', async () => {
+      if (pill.classList.contains('editing')) return;
+      if (suppressCopyClick) {
+        suppressCopyClick = false;
+        return;
+      }
+
+      const now = Date.now();
+      if (clickTimer && now - lastClickAt < 260) {
+        clearTimeout(clickTimer);
+        clickTimer = 0;
+        lastClickAt = 0;
+        this._editPill(pill);
+        return;
+      }
+
+      lastClickAt = now;
+      clickTimer = window.setTimeout(async () => {
+        clickTimer = 0;
+        try {
+          await navigator.clipboard.writeText(pill.dataset.value || '');
+          showToast('已复制标签文本', 'success');
+        } catch {
+          showToast('复制失败', 'error');
+        }
+      }, 220);
     });
-    // 点 × 删除
-    pill.querySelector('.pill-remove').addEventListener('mousedown', (e) => {
-      e.preventDefault();
+
+    wireCopyLongPress(copyButton, pill, this, () => {
+      suppressCopyClick = true;
+      if (clickTimer) {
+        clearTimeout(clickTimer);
+        clickTimer = 0;
+      }
+    });
+
+    removeButton.addEventListener('mousedown', (event) => {
+      event.preventDefault();
       this._removePill(pill);
     });
-    // 拖拽排序
-    _wireDrag(pill, this);
 
+    removeButton.addEventListener('touchstart', (event) => {
+      event.preventDefault();
+      this._removePill(pill);
+    }, { passive: false });
+
+    wireDrag(pill, dragHandle, this);
     this.root.insertBefore(pill, beforeNode);
   }
 
-  // ----------------------------------------------------------
-  // 外部 API
-  // ----------------------------------------------------------
-  /** 返回逗号分隔的完整值（不含当前 editor 未提交部分 — 调用前请 commit） */
   getValue() {
-    // 先提交 editor，保证用户点“生成”时未完成的输入也计入
+    if (this.editingPill) {
+      this._finishPillEdit(this.editingPill, { save: true });
+    }
     this._commitEditor();
-    const pills = this.root.querySelectorAll('.pill');
-    return Array.from(pills).map(p => p.dataset.value).join(', ');
+    return this.getValueSilent();
   }
 
   setValue(str) {
-    // 清空并重建
-    this.root.querySelectorAll('.pill').forEach(p => p.remove());
+    closeContextMenu();
+    this.editingPill = null;
+    this.root.querySelectorAll('.pill').forEach((pill) => pill.remove());
     this.editor.textContent = '';
     if (str) {
-      str.split(/[,\n，]/).map(s => s.trim()).filter(Boolean)
-        .forEach(p => this._insertPillBefore(p, this.editor));
+      splitTags(str).forEach((part) => this._insertPillBefore(part, this.editor));
     }
     this._refreshPlaceholder();
     this._fireChange();
   }
 
-  clear() { this.setValue(''); }
+  clear() {
+    this.setValue('');
+  }
 
-  focus() { this._focusEditorAtEnd(); }
+  focus() {
+    this._focusEditorAtEnd();
+  }
 
-  /** autocomplete 需要拿 editor DOM 节点来绑定事件 */
-  getEditorEl() { return this.editor; }
+  getEditorEl() {
+    return this.editor;
+  }
 
-  /** autocomplete 选中一项后调用：直接插入成 pill */
   insertTag(tagText) {
     this.editor.textContent = '';
     this._insertPillBefore(tagText, this.editor);
@@ -229,51 +329,303 @@ export class PillInput {
     this._focusEditorAtEnd();
   }
 
-  _fireChange() {
-    try { this.onChange(this.getValueSilent()); } catch {}
+  getValueSilent() {
+    return Array.from(this.root.querySelectorAll('.pill'))
+      .map((pill) => {
+        if (pill === this.editingPill) {
+          return pill.querySelector('.pill-edit-input')?.value.trim() || '';
+        }
+        return pill.dataset.value;
+      })
+      .filter(Boolean)
+      .join(', ');
   }
 
-  /** 不 trigger commit 的取值（内部用，避免递归） */
-  getValueSilent() {
-    const pills = this.root.querySelectorAll('.pill');
-    return Array.from(pills).map(p => p.dataset.value).join(', ');
+  _fireChange() {
+    try {
+      this.onChange(this.getValueSilent());
+    } catch {
+      // Ignore consumer callback failures.
+    }
   }
 }
 
-// ----------------------------------------------------------
-// pill 拖动排序（同一个 PillInput 内部）
-// ----------------------------------------------------------
-function _wireDrag(pill, instance) {
-  pill.addEventListener('dragstart', (e) => {
-    pill.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
-    // Firefox 需要设任意数据才会开拖拽
-    e.dataTransfer.setData('text/plain', pill.dataset.value);
+function wireDrag(pill, dragHandle, instance) {
+  let dragArmed = false;
+
+  dragHandle.addEventListener('mousedown', () => {
+    dragArmed = true;
+    const clear = () => {
+      dragArmed = false;
+      document.removeEventListener('mouseup', clear);
+    };
+    document.addEventListener('mouseup', clear);
   });
+
+  pill.addEventListener('dragstart', (event) => {
+    closeContextMenu();
+    if (!dragArmed || pill.classList.contains('editing')) {
+      event.preventDefault();
+      return;
+    }
+    dragArmed = false;
+    pill.classList.add('dragging');
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', pill.dataset.value);
+  });
+
   pill.addEventListener('dragend', () => {
+    dragArmed = false;
     pill.classList.remove('dragging');
     instance._fireChange();
   });
-  pill.addEventListener('dragover', (e) => {
-    e.preventDefault();
+
+  pill.addEventListener('dragover', (event) => {
+    event.preventDefault();
     const dragging = instance.root.querySelector('.pill.dragging');
     if (!dragging || dragging === pill) return;
     const rect = pill.getBoundingClientRect();
-    const after = e.clientX > rect.left + rect.width / 2;
+    const after = event.clientX > rect.left + rect.width / 2;
     instance.root.insertBefore(dragging, after ? pill.nextSibling : pill);
   });
+
+  let touchState = null;
+
+  dragHandle.addEventListener('touchstart', (event) => {
+    if (event.touches.length !== 1 || pill.classList.contains('editing')) return;
+    closeContextMenu();
+
+    const touch = event.touches[0];
+    touchState = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lastX: touch.clientX,
+      lastY: touch.clientY,
+      dragging: false,
+      clone: null,
+      timer: window.setTimeout(() => {
+        if (!touchState) return;
+        touchState.dragging = true;
+        pill.classList.add('dragging');
+        touchState.clone = createTouchClone(pill, touchState.lastX, touchState.lastY);
+        document.body.appendChild(touchState.clone);
+      }, 180),
+    };
+  }, { passive: true });
+
+  dragHandle.addEventListener('touchmove', (event) => {
+    if (!touchState) return;
+
+    const touch = event.touches[0];
+    touchState.lastX = touch.clientX;
+    touchState.lastY = touch.clientY;
+
+    if (!touchState.dragging) {
+      const moved = distance(touchState.startX, touchState.startY, touch.clientX, touch.clientY) > 8;
+      if (moved) {
+        clearTouchDrag(touchState);
+        touchState = null;
+      }
+      return;
+    }
+
+    event.preventDefault();
+    if (touchState.clone) {
+      positionTouchClone(touchState.clone, touch.clientX, touch.clientY);
+    }
+
+    const target = findTouchDropTarget(instance.root, pill, touch.clientX, touch.clientY);
+    if (!target) return;
+    const after = touch.clientX > target.rect.left + target.rect.width / 2;
+    instance.root.insertBefore(pill, after ? target.element.nextSibling : target.element);
+  }, { passive: false });
+
+  const finishTouchDrag = () => {
+    if (!touchState) return;
+
+    if (touchState.dragging) {
+      pill.classList.remove('dragging');
+      touchState.clone?.remove();
+      instance._fireChange();
+    }
+
+    clearTouchDrag(touchState);
+    touchState = null;
+  };
+
+  dragHandle.addEventListener('touchend', finishTouchDrag);
+  dragHandle.addEventListener('touchcancel', finishTouchDrag);
 }
 
-// ----------------------------------------------------------
-// 根据字段默认类别与 tag 本身推断显示色
-// ----------------------------------------------------------
-function _detectPillCategory(text, fieldCategory) {
-  const t = text.toLowerCase().trim();
-  if (t.startsWith('@')) return 'artist';
-  if (/^score_\d+$/.test(t)) return 'score';
-  if (/^(masterpiece|best quality|highres|absurdres|good quality|normal quality|low quality|worst quality)$/.test(t)) return 'quality';
-  if (/^(safe|sensitive|nsfw|explicit)$/.test(t)) return 'safety';
-  if (/^year \d{4}$|^(newest|recent|mid|early|old)$/.test(t)) return 'year';
-  if (/^\d*(girl|boy|other)s?$|^no humans$/.test(t)) return 'count';
+function wireCopyLongPress(copyButton, pill, instance, onOpenMenu) {
+  let touchState = null;
+
+  copyButton.addEventListener('touchstart', (event) => {
+    if (event.touches.length !== 1 || pill.classList.contains('editing')) return;
+    const touch = event.touches[0];
+    touchState = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      timer: window.setTimeout(() => {
+        if (!touchState) return;
+        onOpenMenu();
+        showContextMenu(instance, pill, touchState.startX, touchState.startY);
+      }, 320),
+    };
+  }, { passive: true });
+
+  copyButton.addEventListener('touchmove', (event) => {
+    if (!touchState) return;
+    const touch = event.touches[0];
+    if (distance(touchState.startX, touchState.startY, touch.clientX, touch.clientY) > 10) {
+      clearTimeout(touchState.timer);
+      touchState = null;
+    }
+  }, { passive: true });
+
+  const clear = () => {
+    if (!touchState) return;
+    clearTimeout(touchState.timer);
+    touchState = null;
+  };
+
+  copyButton.addEventListener('touchend', clear);
+  copyButton.addEventListener('touchcancel', clear);
+}
+
+function clearTouchDrag(touchState) {
+  if (!touchState) return;
+  clearTimeout(touchState.timer);
+}
+
+function showContextMenu(instance, pill, clientX, clientY) {
+  closeContextMenu();
+
+  const menu = document.createElement('div');
+  menu.className = 'pill-context-menu';
+  menu.innerHTML = `
+    <button type="button" data-act="edit">编辑</button>
+    <button type="button" data-act="copy">复制</button>
+    <button type="button" data-act="delete" class="danger">删除</button>
+  `;
+  document.body.appendChild(menu);
+
+  const placeMenu = () => {
+    const rect = menu.getBoundingClientRect();
+    const left = Math.max(8, Math.min(clientX - rect.width / 2, window.innerWidth - rect.width - 8));
+    const top = Math.max(8, Math.min(clientY - rect.height - 12, window.innerHeight - rect.height - 8));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+  };
+
+  requestAnimationFrame(placeMenu);
+
+  menu.addEventListener('click', async (event) => {
+    const action = event.target.closest('button')?.dataset.act;
+    if (!action) return;
+
+    if (action === 'edit') {
+      instance._editPill(pill);
+      closeContextMenu();
+      return;
+    }
+
+    if (action === 'delete') {
+      instance._removePill(pill);
+      closeContextMenu();
+      return;
+    }
+
+    if (action === 'copy') {
+      try {
+        await navigator.clipboard.writeText(pill.dataset.value || '');
+        showToast('已复制标签文本', 'success');
+      } catch {
+        showToast('复制失败', 'error');
+      }
+      closeContextMenu();
+    }
+  });
+
+  const onPointerDown = (event) => {
+    if (!menu.contains(event.target)) {
+      closeContextMenu();
+    }
+  };
+
+  const onViewportChange = () => closeContextMenu();
+
+  window.setTimeout(() => {
+    document.addEventListener('pointerdown', onPointerDown);
+  }, 0);
+  window.addEventListener('resize', onViewportChange, { once: true });
+  window.addEventListener('scroll', onViewportChange, { once: true, passive: true });
+
+  activeContextMenu = menu;
+  activeContextCleanup = () => {
+    document.removeEventListener('pointerdown', onPointerDown);
+    window.removeEventListener('resize', onViewportChange);
+    window.removeEventListener('scroll', onViewportChange);
+  };
+}
+
+function closeContextMenu() {
+  if (activeContextCleanup) {
+    activeContextCleanup();
+    activeContextCleanup = null;
+  }
+  if (activeContextMenu) {
+    activeContextMenu.remove();
+    activeContextMenu = null;
+  }
+}
+
+function createTouchClone(pill, clientX, clientY) {
+  const clone = pill.cloneNode(true);
+  clone.classList.add('pill-touch-clone');
+  positionTouchClone(clone, clientX, clientY);
+  return clone;
+}
+
+function positionTouchClone(clone, clientX, clientY) {
+  clone.style.left = `${clientX - 30}px`;
+  clone.style.top = `${clientY - 18}px`;
+}
+
+function findTouchDropTarget(root, currentPill, clientX, clientY) {
+  const pills = root.querySelectorAll('.pill');
+  for (const element of pills) {
+    if (element === currentPill) continue;
+    const rect = element.getBoundingClientRect();
+    if (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom) {
+      return { element, rect };
+    }
+  }
+  return null;
+}
+
+function splitTags(value) {
+  return value
+    .split(/[,\n，]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function distance(x1, y1, x2, y2) {
+  return Math.hypot(x2 - x1, y2 - y1);
+}
+
+function getCopyTitle(value) {
+  return `${value}\n单击复制，双击编辑`;
+}
+
+function detectPillCategory(text, fieldCategory) {
+  const normalized = text.toLowerCase().trim();
+  if (normalized.startsWith('@')) return 'artist';
+  if (/^score_\d+$/.test(normalized)) return 'score';
+  if (/^(masterpiece|best quality|highres|absurdres|good quality|normal quality|low quality|worst quality)$/.test(normalized)) return 'quality';
+  if (/^(safe|sensitive|nsfw|explicit)$/.test(normalized)) return 'safety';
+  if (/^year \d{4}$|^(newest|recent|mid|early|old)$/.test(normalized)) return 'year';
+  if (/^\d*(girl|boy|other)s?$|^no humans$/.test(normalized)) return 'count';
   return fieldCategory || 'general';
 }

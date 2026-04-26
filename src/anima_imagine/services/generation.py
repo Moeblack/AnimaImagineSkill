@@ -51,16 +51,27 @@ class GenerationService:
                 character=req.character,
                 series=req.series,
                 artist=req.artist,
+                # 【v3.0 新增】体型、饰品、身体装饰、表情、姿势、NSFW 子槽
+                body_type_f=req.body_type_f,
+                body_type_m=req.body_type_m,
                 appearance=req.appearance,
                 outfit=req.outfit,
-                pose_expression=req.pose_expression,
+                accessories=req.accessories,
+                body_decoration=req.body_decoration,
+                expression=req.expression,
+                pose_f=req.pose_f,
+                pose_m=req.pose_m,
+                nsfw_pose=req.nsfw_pose,
+                nsfw_interaction=req.nsfw_interaction,
                 composition=req.composition,
                 environment=req.environment,
                 style=req.style,
+                others=req.others,
                 nl_caption=req.nl_caption,
-                # 后向兼容旧字段
+            # 后向兼容旧字段（v2.x）
                 tags=req.tags,
                 nltags=req.nltags,
+                pose_expression=req.pose_expression,
             )
         else:
             prompt = req.prompt
@@ -84,7 +95,7 @@ class GenerationService:
             cfg_scale=req.cfg_scale,
             aspect_ratio=req.aspect_ratio,
         )
-        # 【v2.3】保存高级模式各字段原始值，用于回填和数据库存储
+        # 【v3.0】保存高级模式所有子字段原始值，用于回填和数据库存储
         if req.mode == "advanced":
             job.adv_fields = {
                 "quality_meta_year_safe": req.quality_meta_year_safe,
@@ -92,12 +103,22 @@ class GenerationService:
                 "character": req.character,
                 "series": req.series,
                 "artist": req.artist,
+                # 【v3.0 新增】体型、饰品、身体装饰、表情、姿势、NSFW
+                "body_type_f": req.body_type_f,
+                "body_type_m": req.body_type_m,
                 "appearance": req.appearance,
                 "outfit": req.outfit,
-                "pose_expression": req.pose_expression,
+                "accessories": req.accessories,
+                "body_decoration": req.body_decoration,
+                "expression": req.expression,
+                "pose_f": req.pose_f,
+                "pose_m": req.pose_m,
+                "nsfw_pose": req.nsfw_pose,
+                "nsfw_interaction": req.nsfw_interaction,
                 "composition": req.composition,
                 "environment": req.environment,
                 "style": req.style,
+                "others": req.others,
                 "nl_caption": req.nl_caption,
             }
 

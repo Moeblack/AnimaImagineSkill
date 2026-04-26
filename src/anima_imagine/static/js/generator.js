@@ -1,377 +1,552 @@
-/**
- * AnimaImagine v2.2 生图面板。
- *
- * v2.2 变更：
- *   - 高级模式全部字段改为 multiline tag-pill 输入
- *   - 画师、角色、作品字段有专用补全过滤
- *   - 新增 outfit / pose_expression / composition 子槽
- *   - “标签库”入口（header 按钮）打开数据管理对话框
- *   - 实时预览从 pill 实例采集
- *   - fillFromMeta 会智能拆分 prompt 取画师段回填到画师字段
- */
-
 import { getResolution, showToast } from './utils.js';
 import { enableAutocomplete, enableAutocompleteForPill } from './autocomplete.js';
 import { PillInput } from './pill-input.js';
-import { openTagDataManager } from './tag-data-manager.js';
-import { createPresetButton } from './field-presets.js';
+import { openTagDataManager, syncCustomTagsFromServer } from './tag-data-manager.js';
+import { createPresetButton, loadAllPresetsFromServer } from './field-presets.js';
 
-// ============================================================
-// 状态
-// ============================================================
-let currentMode = 'basic';
+let currentMode = 'advanced';
 let currentRatio = '3:4';
 let currentMP = 1.0;
 let manualResolution = false;
 
-const _bus = new EventTarget();
-export function onGenerated(fn) { _bus.addEventListener('generated', fn); }
+const bus = new EventTarget();
+export function onGenerated(fn) {
+  bus.addEventListener('generated', fn);
+}
 
-// v2.2: 高级字段表。id ↔ payload 键 ↔ categoryFilter。
-//   categoryFilter 与 danbooru：0=general 1=artist 3=copyright 4=character 5=meta
 const ADV_FIELDS = [
-  { id: 'advQuality',     key: 'quality_meta_year_safe', cat: null, defaultVal: 'masterpiece, best quality, newest, year 2025, safe' },
-  { id: 'advCount',       key: 'count',                  cat: null, defaultVal: '1girl' },
-  { id: 'advCharacter',   key: 'character',              cat: 4 },
-  { id: 'advSeries',      key: 'series',                 cat: 3 },
-  { id: 'advArtist',      key: 'artist',                 cat: 1 },
-  { id: 'advAppearance',  key: 'appearance',             cat: 0 },
-  { id: 'advOutfit',      key: 'outfit',                 cat: 0 },
-  { id: 'advPose',        key: 'pose_expression',        cat: 0 },
-  { id: 'advComposition', key: 'composition',            cat: 0 },
-  { id: 'advEnvironment', key: 'environment',            cat: 0 },
-  { id: 'advStyle',       key: 'style',                  cat: 0 },
-  { id: 'advNlCaption',   key: 'nl_caption',             cat: 0 },
+  { id: 'advQuality', key: 'quality_meta_year_safe', cat: null, defaultVal: 'masterpiece, best quality, newest, year 2025, safe' },
+  { id: 'advCount', key: 'count', cat: null, defaultVal: '1girl' },
+  { id: 'advCharacter', key: 'character', cat: 4 },
+  { id: 'advSeries', key: 'series', cat: 3 },
+  { id: 'advArtist', key: 'artist', cat: 1 },
+  { id: 'advBodyF', key: 'body_type_f', cat: 0 },
+  { id: 'advBodyM', key: 'body_type_m', cat: 0 },
+  { id: 'advAppearance', key: 'appearance', cat: 0 },
+  { id: 'advOutfit', key: 'outfit', cat: 0 },
+  { id: 'advAccessories', key: 'accessories', cat: 0 },
+  { id: 'advBodyDeco', key: 'body_decoration', cat: 0 },
+  { id: 'advExpression', key: 'expression', cat: 0 },
+  { id: 'advPoseF', key: 'pose_f', cat: 0 },
+  { id: 'advPoseM', key: 'pose_m', cat: 0 },
+  { id: 'advNsfwPose', key: 'nsfw_pose', cat: 0 },
+  { id: 'advNsfwInteraction', key: 'nsfw_interaction', cat: 0 },
+  { id: 'advComposition', key: 'composition', cat: 0 },
+  { id: 'advEnvironment', key: 'environment', cat: 0 },
+  { id: 'advStyle', key: 'style', cat: 0 },
+  { id: 'advOthers', key: 'others', cat: 0 },
+  { id: 'advNlCaption', key: 'nl_caption', cat: 0 },
 ];
 
-// id → PillInput 实例
 const pillInputs = new Map();
+const batchEditors = new Map();
 
-// ============================================================
-// 初始化
-// ============================================================
-export function init() {
+const HISTORY_KEY = 'anima_prompt_history';
+const MAX_HISTORY = 50;
+const LS_LASTVAL_KEY = 'anima_adv_lastvalues';
+
+let historyCache = [];
+let previewRafId = 0;
+let saveLastValuesTimer = 0;
+
+let batchCancelled = false;
+let batchRunning = false;
+let fabDefaultText = '✨';
+
+export async function init() {
   document.getElementById('toggleGenerator')?.addEventListener('click', toggleGenerator);
   document.getElementById('closeGenerator')?.addEventListener('click', () => {
-    document.getElementById('generatorPanel').style.display = 'none';
+    const panel = document.getElementById('generatorPanel');
+    if (panel) panel.style.display = 'none';
   });
   document.getElementById('tabBasic')?.addEventListener('click', () => switchTab('basic'));
   document.getElementById('tabAdvanced')?.addEventListener('click', () => switchTab('advanced'));
   document.getElementById('jsonUpload')?.addEventListener('change', handleJsonUpload);
-  document.getElementById('clearPromptBtn')?.addEventListener('click', _clearAll);
+  document.getElementById('clearPromptBtn')?.addEventListener('click', clearAll);
   document.getElementById('generateBtn')?.addEventListener('click', doGenerate);
-  document.getElementById('openTagManager')?.addEventListener('click', openTagDataManager);
-
-  // 【v2.3】从 localStorage 恢复上次使用的字段值，key 前缀 anima_lastval_
-  const _savedVals = _loadLastValues();
-
-  // 初始化 PillInput
-  ADV_FIELDS.forEach(f => {
-    const host = document.getElementById(f.id);
-    if (!host) return;
-    const pill = new PillInput(host, {
-      placeholder: host.dataset.placeholder || '',
-      category: f.cat === 1 ? 'artist' : f.cat === 4 ? 'character' : f.cat === 3 ? 'copyright' : 'general',
-      singleLine: host.dataset.single === '1',
-      // 【v2.3】onChange 同时触发预览更新和自动保存上次值
-      onChange: () => { _updatePromptPreview(); _saveLastValues(); },
-    });
-    // 【v2.3】优先恢复上次保存的值；首次使用（无保存记录）时才用硬编码默认值
-    const initialVal = _savedVals[f.id] !== undefined ? _savedVals[f.id] : (f.defaultVal || '');
-    if (initialVal) pill.setValue(initialVal);
-    pillInputs.set(f.id, pill);
-    enableAutocompleteForPill(pill, { categoryFilter: f.cat == null ? undefined : f.cat });
-    // 【v2.3 新增】为每个字段创建预设保存按钮，插入到 label 旁边
-    const label = host.closest('.adv-field')?.querySelector('.adv-label');
-    if (label) {
-      const presetBtn = createPresetButton(f.id, pill);
-      label.appendChild(presetBtn);
+  document.getElementById('openTagManager')?.addEventListener('click', () => {
+    void openTagDataManager();
+  });
+  document.getElementById('seedRandom')?.addEventListener('click', () => {
+    const seed = document.getElementById('paramSeed');
+    if (seed) seed.value = -1;
+  });
+  document.getElementById('previewCopy')?.addEventListener('click', async () => {
+    const text = document.getElementById('previewText')?.textContent || '';
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('已复制拼接结果', 'success');
+    } catch {
+      showToast('复制失败', 'error');
     }
   });
 
-  // 比例按钮组
-  document.querySelectorAll('.ratio-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      currentRatio = btn.dataset.ratio;
-      document.querySelectorAll('.ratio-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
+  initFAB();
+
+  const savedValues = await loadLastValues();
+  await loadAllPresetsFromServer();
+
+  ADV_FIELDS.forEach((field) => {
+    const host = document.getElementById(field.id);
+    if (!host) return;
+
+    const pill = new PillInput(host, {
+      placeholder: host.dataset.placeholder || '',
+      category: mapFieldCategory(field.cat),
+      singleLine: host.dataset.single === '1',
+      onChange: () => {
+        updatePromptPreview();
+        saveLastValues();
+        syncBatchEditorsFromPills();
+      },
+    });
+
+    const initialValue = savedValues[field.id] !== undefined ? savedValues[field.id] : (field.defaultVal || '');
+    if (initialValue) {
+      pill.setValue(initialValue);
+    }
+
+    pillInputs.set(field.id, pill);
+    enableAutocompleteForPill(pill, { categoryFilter: field.cat == null ? undefined : field.cat });
+
+    const label = host.closest('.adv-field')?.querySelector('.adv-label');
+    if (label) {
+      initFieldTools(field, host, label, pill);
+    }
+  });
+
+  document.querySelectorAll('.ratio-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      currentRatio = button.dataset.ratio;
+      document.querySelectorAll('.ratio-btn').forEach((item) => item.classList.remove('active'));
+      button.classList.add('active');
       manualResolution = false;
-      _updateResolution();
+      updateResolution();
     });
   });
 
-  document.querySelectorAll('.mp-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      currentMP = parseFloat(btn.dataset.mp);
-      document.getElementById('mpInput').value = currentMP;
-      document.querySelectorAll('.mp-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
+  document.querySelectorAll('.mp-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      currentMP = Number.parseFloat(button.dataset.mp);
+      const mpInput = document.getElementById('mpInput');
+      if (mpInput) mpInput.value = currentMP;
+      document.querySelectorAll('.mp-btn').forEach((item) => item.classList.remove('active'));
+      button.classList.add('active');
       manualResolution = false;
-      _updateResolution();
+      updateResolution();
     });
   });
 
   const mpInput = document.getElementById('mpInput');
   mpInput?.addEventListener('input', () => {
-    let val = parseFloat(mpInput.value);
-    if (isNaN(val)) return;
-    val = Math.max(0.5, Math.min(4.0, val));
-    currentMP = val;
-    document.querySelectorAll('.mp-btn').forEach(b => {
-      b.classList.toggle('active', parseFloat(b.dataset.mp) === val);
+    let nextValue = Number.parseFloat(mpInput.value);
+    if (Number.isNaN(nextValue)) return;
+    nextValue = Math.max(0.5, Math.min(4.0, nextValue));
+    currentMP = nextValue;
+    document.querySelectorAll('.mp-btn').forEach((button) => {
+      button.classList.toggle('active', Number.parseFloat(button.dataset.mp) === nextValue);
     });
     manualResolution = false;
-    _updateResolution();
+    updateResolution();
   });
 
-  _initSlider('stepsSlider', 'stepsValue', 'paramSteps');
-  _initSlider('cfgSlider', 'cfgValue', 'paramCfg');
+  initSlider('stepsSlider', 'stepsValue', 'paramSteps');
+  initSlider('cfgSlider', 'cfgValue', 'paramCfg');
 
-  document.getElementById('seedRandom')?.addEventListener('click', () => {
-    document.getElementById('paramSeed').value = -1;
-  });
+  enableAutocomplete(document.getElementById('basicPrompt'));
+  enableAutocomplete(document.getElementById('negPrompt'));
 
-  // Ctrl+Enter 快捷生成
-  document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+  document.addEventListener('keydown', (event) => {
+    if (event.defaultPrevented) return;
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
       const panel = document.getElementById('generatorPanel');
       if (panel && panel.style.display !== 'none') {
-        e.preventDefault();
-        doGenerate();
+        event.preventDefault();
+        void doGenerate();
       }
     }
   });
 
-  // 基础模式 / 负面 仍为 textarea
-  enableAutocomplete(document.getElementById('basicPrompt'));
-  enableAutocomplete(document.getElementById('negPrompt'));
+  const negPrompt = document.getElementById('negPrompt');
+  negPrompt?.addEventListener('input', updateNegBadge);
+  updateNegBadge();
 
-  // 预览复制
-  document.getElementById('previewCopy')?.addEventListener('click', () => {
-    const text = document.getElementById('previewText')?.textContent || '';
-    if (text) navigator.clipboard.writeText(text).then(() => showToast('✅ 已复制拼接结果', 'success'));
-  });
-
-  // Negative badge
-  const neg = document.getElementById('negPrompt');
-  neg?.addEventListener('input', _updateNegBadge);
-  _updateNegBadge();
-
-  _initPromptHistory();
-  _updateResolution();
-  _updatePromptPreview();
+  await loadHistoryFromServer();
+  initPromptHistory();
+  syncBatchEditorsFromPills();
+  updateResolution();
+  updatePromptPreview();
 }
 
-// ============================================================
-// 面板 / 模式
-// ============================================================
+function mapFieldCategory(cat) {
+  if (cat === 1) return 'artist';
+  if (cat === 4) return 'character';
+  if (cat === 3) return 'copyright';
+  return 'general';
+}
+
 function toggleGenerator() {
   const panel = document.getElementById('generatorPanel');
-  panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+  if (!panel) return;
+  const opening = panel.style.display === 'none';
+  panel.style.display = opening ? 'flex' : 'none';
+  if (opening) {
+    // 前端性能优化：标签库只在用户打开生成面板时预热，目的在于图库首屏不再解析大型 CSV。
+    void syncCustomTagsFromServer();
+  }
 }
 
 function switchTab(mode) {
   currentMode = mode;
-  document.getElementById('tabBasic').classList.toggle('active', mode === 'basic');
-  document.getElementById('tabAdvanced').classList.toggle('active', mode === 'advanced');
-  document.getElementById('modeBasic').style.display = mode === 'basic' ? 'block' : 'none';
-  document.getElementById('modeAdvanced').style.display = mode === 'advanced' ? 'block' : 'none';
-  if (mode === 'advanced') _updatePromptPreview();
+  document.getElementById('tabBasic')?.classList.toggle('active', mode === 'basic');
+  document.getElementById('tabAdvanced')?.classList.toggle('active', mode === 'advanced');
+  const modeBasic = document.getElementById('modeBasic');
+  const modeAdvanced = document.getElementById('modeAdvanced');
+  if (modeBasic) modeBasic.style.display = mode === 'basic' ? 'block' : 'none';
+  if (modeAdvanced) modeAdvanced.style.display = mode === 'advanced' ? 'block' : 'none';
+  if (mode === 'advanced') updatePromptPreview();
 }
 
-// ============================================================
-// 清空 / 预览 / Negative badge
-// ============================================================
-function _clearAll() {
-  document.getElementById('basicPrompt').value = '';
-  ADV_FIELDS.forEach(f => {
-    const pill = pillInputs.get(f.id);
-    if (pill) pill.setValue(f.defaultVal || '');
+function initFieldTools(field, host, label, pill) {
+  let actionBar = label.querySelector('.adv-label-actions');
+  if (!actionBar) {
+    actionBar = document.createElement('span');
+    actionBar.className = 'adv-label-actions';
+    label.appendChild(actionBar);
+  }
+
+  actionBar.appendChild(createPresetButton(field.id, pill));
+  actionBar.appendChild(createBatchEditButton(field.id));
+
+  if (batchEditors.has(field.id)) return;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'batch-edit-area';
+  wrap.hidden = true;
+  wrap.innerHTML = `
+    <textarea class="batch-edit-textarea" rows="4" placeholder="支持逗号或换行批量编辑"></textarea>
+    <div class="batch-edit-actions">
+      <button type="button" class="batch-edit-confirm">确认</button>
+      <button type="button" class="batch-edit-cancel">取消</button>
+    </div>
+  `;
+  host.insertAdjacentElement('afterend', wrap);
+
+  const textarea = wrap.querySelector('.batch-edit-textarea');
+  batchEditors.set(field.id, { host, wrap, textarea });
+
+  wrap.querySelector('.batch-edit-confirm')?.addEventListener('click', () => {
+    pill.setValue(textarea.value.trim());
+    closeBatchEdit(field.id, { syncFromPill: true });
   });
-  _updatePromptPreview();
-  _saveLastValues();
-  showToast('已清空', 'info');
+  wrap.querySelector('.batch-edit-cancel')?.addEventListener('click', () => {
+    closeBatchEdit(field.id, { syncFromPill: true });
+  });
+  textarea.addEventListener('keydown', (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      wrap.querySelector('.batch-edit-confirm')?.click();
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      wrap.querySelector('.batch-edit-cancel')?.click();
+    }
+  });
 }
 
-// 【v2.3 性能优化】用 RAF 去抖，避免多次 pill 变更（如 setValue 循环）
-// 每次都触发 DOM 更新。只在下一帧渲染一次即可。
-let _previewRafId = 0;
-function _updatePromptPreview() {
-  if (_previewRafId) return;
-  _previewRafId = requestAnimationFrame(_doUpdatePreview);
+function createBatchEditButton(fieldId) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'adv-edit-btn';
+  button.title = '批量编辑';
+  button.textContent = '✏️';
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    openBatchEdit(fieldId);
+  });
+  return button;
 }
-function _doUpdatePreview() {
-  _previewRafId = 0;
+
+function openBatchEdit(fieldId) {
+  const state = batchEditors.get(fieldId);
+  if (!state) return;
+
+  batchEditors.forEach((_, id) => {
+    if (id !== fieldId) closeBatchEdit(id, { syncFromPill: true });
+  });
+
+  const pill = pillInputs.get(fieldId);
+  state.textarea.value = pill ? pill.getValueSilent() : '';
+  state.host.hidden = true;
+  state.wrap.hidden = false;
+  state.wrap.classList.add('active');
+  state.textarea.focus();
+  state.textarea.setSelectionRange(state.textarea.value.length, state.textarea.value.length);
+}
+
+function closeBatchEdit(fieldId, { syncFromPill = false } = {}) {
+  const state = batchEditors.get(fieldId);
+  if (!state) return;
+  if (syncFromPill) {
+    const pill = pillInputs.get(fieldId);
+    state.textarea.value = pill ? pill.getValueSilent() : '';
+  }
+  state.host.hidden = false;
+  state.wrap.hidden = true;
+  state.wrap.classList.remove('active');
+}
+
+function syncBatchEditorsFromPills() {
+  batchEditors.forEach((state, fieldId) => {
+    const pill = pillInputs.get(fieldId);
+    state.textarea.value = pill ? pill.getValueSilent() : '';
+  });
+}
+
+function clearAll() {
+  const basicPrompt = document.getElementById('basicPrompt');
+  if (basicPrompt) basicPrompt.value = '';
+  ADV_FIELDS.forEach((field) => {
+    const pill = pillInputs.get(field.id);
+    if (pill) pill.setValue(field.defaultVal || '');
+  });
+  syncBatchEditorsFromPills();
+  updatePromptPreview();
+  saveLastValues();
+  showToast('已清空字段', 'info');
+}
+
+function updatePromptPreview() {
+  if (previewRafId) return;
+  previewRafId = requestAnimationFrame(doUpdatePreview);
+}
+
+function doUpdatePreview() {
+  previewRafId = 0;
   const previewEl = document.getElementById('previewText');
   if (!previewEl) return;
-  // 按 ADV_FIELDS 顺序拼接。注意画师需加 @。
-  const parts = [];
-  ADV_FIELDS.forEach(f => {
-    const pill = pillInputs.get(f.id);
-    if (!pill) return;
-    let v = pill.getValueSilent().trim();
-    if (!v) return;
-    if (f.key === 'artist') {
-      v = v.split(',').map(s => s.trim()).filter(Boolean)
-           .map(s => s.startsWith('@') ? s : '@' + s).join(', ');
-    }
-    parts.push(v);
-  });
-  const result = parts.join(', ');
-  previewEl.textContent = result || '(输入字段后自动显示拼接结果)';
-  previewEl.style.color = result ? '#c0c0d8' : '#555';
+
+  const prompt = buildAdvancedPreview();
+  previewEl.textContent = prompt || '（输入字段后自动显示拼接结果）';
+  previewEl.style.color = prompt ? '#c0c0d8' : '#555';
 }
 
-function _updateNegBadge() {
+function buildAdvancedPreview(payload = null) {
+  const parts = [];
+  ADV_FIELDS.forEach((field) => {
+    let value = '';
+    if (payload) {
+      value = String(payload[field.key] || '').trim();
+    } else {
+      const pill = pillInputs.get(field.id);
+      value = pill ? pill.getValueSilent().trim() : '';
+    }
+    if (!value) return;
+    if (field.key === 'artist') {
+      value = value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item) => (item.startsWith('@') ? item : `@${item}`))
+        .join(', ');
+    }
+    parts.push(value);
+  });
+  return parts.join(', ');
+}
+
+function updateNegBadge() {
   const negPrompt = document.getElementById('negPrompt');
   const badge = document.getElementById('negBadge');
   if (!negPrompt || !badge) return;
-  const count = negPrompt.value.split(',').filter(t => t.trim()).length;
+  const count = negPrompt.value.split(',').filter((item) => item.trim()).length;
   badge.textContent = `${count} tags`;
 }
 
-// ============================================================
-// JSON 导入
-// ============================================================
-function handleJsonUpload(e) {
-  const file = e.target.files[0];
+function handleJsonUpload(event) {
+  const file = event.target.files?.[0];
   if (!file) return;
+
   const reader = new FileReader();
-  reader.onload = evt => {
+  reader.onload = (loadEvent) => {
     try {
-      const data = JSON.parse(evt.target.result);
-      if (data.prompt) document.getElementById('basicPrompt').value = data.prompt;
+      const data = JSON.parse(loadEvent.target.result);
+      if (data.prompt) {
+        const basicPrompt = document.getElementById('basicPrompt');
+        if (basicPrompt) basicPrompt.value = data.prompt;
+      }
       if (data.negative_prompt) {
-        document.getElementById('negPrompt').value = data.negative_prompt;
-        _updateNegBadge();
+        const negPrompt = document.getElementById('negPrompt');
+        if (negPrompt) negPrompt.value = data.negative_prompt;
+        updateNegBadge();
       }
       if (data.seed !== undefined) document.getElementById('paramSeed').value = data.seed;
       if (data.steps !== undefined) {
         document.getElementById('paramSteps').value = data.steps;
-        _syncSliderFromInput('stepsSlider', 'stepsValue', data.steps);
+        syncSliderFromInput('stepsSlider', 'stepsValue', data.steps);
       }
       if (data.cfg_scale !== undefined) {
         document.getElementById('paramCfg').value = data.cfg_scale;
-        _syncSliderFromInput('cfgSlider', 'cfgValue', data.cfg_scale);
+        syncSliderFromInput('cfgSlider', 'cfgValue', data.cfg_scale);
       }
       if (data.aspect_ratio) {
         currentRatio = data.aspect_ratio;
-        _activateRatioBtn(data.aspect_ratio);
+        activateRatioBtn(data.aspect_ratio);
       }
       switchTab('basic');
+      updateResolution();
       showToast('JSON 导入成功', 'success');
-    } catch (err) {
-      showToast('JSON 解析失败: ' + err.message, 'error');
+    } catch (error) {
+      showToast(`JSON 解析失败: ${error.message}`, 'error');
     }
   };
   reader.readAsText(file);
-  e.target.value = '';
+  event.target.value = '';
 }
 
-// ============================================================
-// 生成
-// ============================================================
-async function doGenerate() {
-  const btn = document.getElementById('generateBtn');
+export async function doGenerate() {
+  const button = document.getElementById('generateBtn');
   const statusEl = document.getElementById('genStatus');
+  if (button) button.disabled = true;
+  if (statusEl) statusEl.innerHTML = '<span class="spinner"></span> 提交中...';
 
+  try {
+    const payload = collectPayload();
+    const result = await runGenerationFlow(payload, {
+      onQueued: (data) => {
+        if (statusEl) {
+          statusEl.innerHTML = `<span class="spinner"></span> 排队中（第 ${data.queue_position || '?'} 位）...`;
+        }
+      },
+      onRunning: () => {
+        if (statusEl) {
+          statusEl.innerHTML = '<span class="spinner"></span> 正在生成...';
+        }
+      },
+    });
+
+    showToast(`生成完成，用时 ${result.generation_time || '?'}s`, 'success');
+    if (statusEl) statusEl.textContent = '';
+  } catch (error) {
+    if (error?.redirectToLogin) {
+      window.location.href = '/login';
+      return;
+    }
+    showToast(error.message || '生成失败', 'error');
+    if (statusEl) statusEl.textContent = '';
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function collectPayload({ silent = false } = {}) {
   const { width, height } = manualResolution
-    ? { width: parseInt(document.getElementById('paramWidth').value) || 0,
-        height: parseInt(document.getElementById('paramHeight').value) || 0 }
+    ? {
+        width: Number.parseInt(document.getElementById('paramWidth').value, 10) || 0,
+        height: Number.parseInt(document.getElementById('paramHeight').value, 10) || 0,
+      }
     : getResolution(currentRatio, currentMP);
 
   const payload = {
     mode: currentMode,
-    negative_prompt: document.getElementById('negPrompt').value,
-    seed: parseInt(document.getElementById('paramSeed').value),
-    steps: parseInt(document.getElementById('paramSteps').value),
-    cfg_scale: parseFloat(document.getElementById('paramCfg').value),
+    negative_prompt: document.getElementById('negPrompt')?.value || '',
+    seed: Number.parseInt(document.getElementById('paramSeed')?.value, 10),
+    steps: Number.parseInt(document.getElementById('paramSteps')?.value, 10),
+    cfg_scale: Number.parseFloat(document.getElementById('paramCfg')?.value),
     aspect_ratio: currentRatio,
-    width, height,
+    width,
+    height,
   };
 
   if (currentMode === 'basic') {
-    payload.prompt = document.getElementById('basicPrompt').value;
-  } else {
-    // 从所有 PillInput 采集
-    ADV_FIELDS.forEach(f => {
-      const pill = pillInputs.get(f.id);
-      if (pill) payload[f.key] = pill.getValue();
-    });
+    payload.prompt = document.getElementById('basicPrompt')?.value || '';
+    return payload;
   }
 
-  btn.disabled = true;
-  statusEl.innerHTML = '<span class="spinner"></span> 提交中...';
-
-  try {
-    const res = await fetch('/api/generate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (res.status === 401) { window.location.href = '/login'; return; }
-    if (res.status === 429) {
-      showToast('⚠️ 生图请求过于频繁', 'error');
-      statusEl.textContent = ''; btn.disabled = false; return;
-    }
-    const data = await res.json();
-    if (data.status === 'queued' && data.job_id) {
-      statusEl.innerHTML = `<span class="spinner"></span> 排队中（第 ${data.queue_position} 位）...`;
-      _pollJob(data.job_id, btn, statusEl, payload);
-    } else if (data.error) {
-      showToast('❌ ' + data.error, 'error');
-      statusEl.textContent = ''; btn.disabled = false;
-    }
-  } catch (err) {
-    showToast('❌ 请求错误: ' + err.message, 'error');
-    statusEl.textContent = ''; btn.disabled = false;
-  }
+  ADV_FIELDS.forEach((field) => {
+    const pill = pillInputs.get(field.id);
+    if (!pill) return;
+    payload[field.key] = silent ? pill.getValueSilent() : pill.getValue();
+  });
+  return payload;
 }
 
-async function _pollJob(jobId, btn, statusEl, payload) {
-  const maxPolls = 300;
-  for (let i = 0; i < maxPolls; i++) {
-    await new Promise(r => setTimeout(r, 1500));
-    try {
-      const resp = await fetch(`/api/jobs/${jobId}`);
-      if (!resp.ok) continue;
-      const job = await resp.json();
-      if (job.status === 'queued') {
-        statusEl.innerHTML = `<span class="spinner"></span> 排队中（第 ${job.queue_position} 位）...`;
-      } else if (job.status === 'running') {
-        statusEl.innerHTML = '<span class="spinner"></span> 正在生成...';
-      } else if (job.status === 'succeeded') {
-        showToast(`✅ 生成完成！耗时 ${job.generation_time || '?'}s`, 'success');
-        statusEl.textContent = '';
-        _savePromptHistory(payload);
-        _bus.dispatchEvent(new Event('generated'));
-        btn.disabled = false;
-        return;
-      } else if (job.status === 'failed') {
-        showToast('❌ 生成失败: ' + (job.error || '未知错误'), 'error');
-        statusEl.textContent = ''; btn.disabled = false; return;
-      } else if (job.status === 'cancelled') {
-        showToast('任务已取消', 'info');
-        statusEl.textContent = ''; btn.disabled = false; return;
-      }
-    } catch (e) { /* continue */ }
+async function runGenerationFlow(payload, hooks = {}) {
+  const response = await fetch('/api/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (response.status === 401) {
+    const error = new Error('未登录');
+    error.redirectToLogin = true;
+    throw error;
   }
-  showToast('⚠️ 任务超时', 'error');
-  statusEl.textContent = ''; btn.disabled = false;
+  if (response.status === 429) {
+    throw new Error('生成请求过于频繁，请稍后再试');
+  }
+
+  const data = await response.json();
+  if (data.error) {
+    throw new Error(data.error);
+  }
+  if (data.status !== 'queued' || !data.job_id) {
+    throw new Error('未获取到任务编号');
+  }
+
+  hooks.onQueued?.(data);
+  const job = await waitForJob(data.job_id, hooks.onRunning);
+  savePromptHistory(payload);
+  bus.dispatchEvent(new Event('generated'));
+  return job;
 }
 
-// ============================================================
-// 分辨率 / 滑块
-// ============================================================
-function _updateResolution() {
+async function waitForJob(jobId, onRunning) {
+  for (let i = 0; i < 300; i += 1) {
+    if (batchRunning && batchCancelled) {
+      throw new Error('已取消');
+    }
+    await delay(1500);
+    if (batchRunning && batchCancelled) {
+      throw new Error('已取消');
+    }
+    const response = await fetch(`/api/jobs/${jobId}`);
+    if (!response.ok) continue;
+    const job = await response.json();
+
+    if (job.status === 'queued') continue;
+    if (job.status === 'running') {
+      onRunning?.(job);
+      continue;
+    }
+    if (job.status === 'succeeded') {
+      return job;
+    }
+    if (job.status === 'failed') {
+      throw new Error(job.error || '生成失败');
+    }
+    if (job.status === 'cancelled') {
+      throw new Error('任务已取消');
+    }
+  }
+  throw new Error('任务轮询超时');
+}
+
+function updateResolution() {
   const { width, height, actualMP } = getResolution(currentRatio, currentMP);
   const display = document.getElementById('resolutionDisplay');
-  if (display) display.innerHTML = `→ <strong>${width}×${height}</strong> (${actualMP} MP)`;
-  document.getElementById('paramWidth').value = width;
-  document.getElementById('paramHeight').value = height;
+  if (display) {
+    display.innerHTML = `→ <strong>${width}×${height}</strong> (${actualMP} MP)`;
+  }
+  const widthInput = document.getElementById('paramWidth');
+  const heightInput = document.getElementById('paramHeight');
+  if (widthInput) widthInput.value = width;
+  if (heightInput) heightInput.value = height;
 }
 
-function _initSlider(sliderId, displayId, inputId) {
+function initSlider(sliderId, displayId, inputId) {
   const slider = document.getElementById(sliderId);
   const display = document.getElementById(displayId);
   const input = document.getElementById(inputId);
@@ -384,142 +559,307 @@ function _initSlider(sliderId, displayId, inputId) {
   });
 }
 
-function _syncSliderFromInput(sliderId, displayId, value) {
+function syncSliderFromInput(sliderId, displayId, value) {
   const slider = document.getElementById(sliderId);
   const display = document.getElementById(displayId);
   if (slider) slider.value = value;
   if (display) display.textContent = value;
 }
 
-function _activateRatioBtn(ratio) {
-  document.querySelectorAll('.ratio-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.ratio === ratio);
+function activateRatioBtn(ratio) {
+  document.querySelectorAll('.ratio-btn').forEach((button) => {
+    button.classList.toggle('active', button.dataset.ratio === ratio);
   });
 }
 
-// ============================================================
-// Prompt 历史
-// ============================================================
-const HISTORY_KEY = 'anima_prompt_history';
-const MAX_HISTORY = 50;
-
-function _initPromptHistory() {
+function initPromptHistory() {
   const select = document.getElementById('promptHistory');
   if (!select) return;
-  _renderHistory(select);
+
+  renderHistory(select);
   select.addEventListener('change', () => {
-    const idx = parseInt(select.value);
-    if (isNaN(idx)) return;
-    const history = _getHistory();
-    const entry = history[idx];
+    const index = Number.parseInt(select.value, 10);
+    if (Number.isNaN(index)) return;
+    const entry = historyCache[index];
     if (!entry) return;
-    if (entry.prompt) document.getElementById('basicPrompt').value = entry.prompt;
-    if (entry.negative_prompt) {
-      document.getElementById('negPrompt').value = entry.negative_prompt;
-      _updateNegBadge();
+
+    if (entry.prompt) {
+      const basicPrompt = document.getElementById('basicPrompt');
+      if (basicPrompt) basicPrompt.value = entry.prompt;
     }
-    showToast('历史记录已回填', 'info');
+    if (entry.negative_prompt) {
+      const negPrompt = document.getElementById('negPrompt');
+      if (negPrompt) negPrompt.value = entry.negative_prompt;
+      updateNegBadge();
+    }
+    showToast('已回填历史记录', 'info');
   });
 }
-function _getHistory() {
-  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]'); } catch { return []; }
+
+async function loadHistoryFromServer() {
+  try {
+    const response = await fetch('/api/preferences?keys=prompt_history');
+    if (response.ok) {
+      const data = await response.json();
+      if (data.prompt_history) {
+        historyCache = JSON.parse(data.prompt_history);
+        return;
+      }
+    }
+  } catch {
+    // Ignore and fall back to localStorage.
+  }
+
+  try {
+    historyCache = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+  } catch {
+    historyCache = [];
+  }
 }
-function _savePromptHistory(payload) {
-  const history = _getHistory();
-  // 实际交上去的可能是高级字段，此时拼个 basic prompt 作为预览
-  const promptText = payload.prompt ||
-    ADV_FIELDS.map(f => payload[f.key] || '').filter(Boolean).join(', ');
-  history.unshift({
+
+function savePromptHistory(payload) {
+  const promptText = payload.prompt || buildAdvancedPreview(payload);
+  historyCache.unshift({
     prompt: promptText,
     negative_prompt: payload.negative_prompt || '',
     timestamp: new Date().toISOString(),
   });
-  if (history.length > MAX_HISTORY) history.length = MAX_HISTORY;
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(history));
+  if (historyCache.length > MAX_HISTORY) {
+    historyCache.length = MAX_HISTORY;
+  }
+
+  const json = JSON.stringify(historyCache);
+  try {
+    localStorage.setItem(HISTORY_KEY, json);
+  } catch {
+    // Ignore.
+  }
+  fetch('/api/preferences', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: 'prompt_history', value: json }),
+  }).catch(() => {});
+
   const select = document.getElementById('promptHistory');
-  if (select) _renderHistory(select);
-}
-function _renderHistory(select) {
-  const history = _getHistory();
-  select.innerHTML = '<option value="">📜 历史</option>' +
-    history.map((h, i) => {
-      const preview = (h.prompt || '').substring(0, 40) + ((h.prompt?.length > 40) ? '...' : '');
-      return `<option value="${i}">${preview}</option>`;
-    }).join('');
+  if (select) renderHistory(select);
 }
 
-// ============================================================
-// 外部调用：用图片元数据填充
-// ============================================================
+function renderHistory(select) {
+  select.innerHTML = '<option value="">📜 历史</option>' + historyCache.map((item, index) => {
+    const preview = (item.prompt || '').substring(0, 40);
+    const suffix = (item.prompt || '').length > 40 ? '...' : '';
+    return `<option value="${index}">${preview}${suffix}</option>`;
+  }).join('');
+}
+
 export function fillFromMeta(img) {
   if (!img) return;
+
   const panel = document.getElementById('generatorPanel');
   if (panel) panel.style.display = 'flex';
 
-  // 【v2.3】如果有 adv_fields，回填到高级模式；否则回填基础模式
   const adv = img.adv_fields;
   if (adv && Object.keys(adv).length > 0) {
     switchTab('advanced');
-    // 按 ADV_FIELDS 的 key 与 adv_fields 的 key 对应关系回填
-    ADV_FIELDS.forEach(f => {
-      const pill = pillInputs.get(f.id);
+    ADV_FIELDS.forEach((field) => {
+      const pill = pillInputs.get(field.id);
       if (!pill) return;
-      const val = adv[f.key];
-      if (val !== undefined) pill.setValue(val);
+      let value = adv[field.key];
+      if (value === undefined && field.key === 'pose_f' && adv.pose_expression !== undefined) {
+        value = adv.pose_expression;
+      }
+      if (value !== undefined) {
+        pill.setValue(value);
+      }
     });
-    if (img.negative_prompt) {
-      document.getElementById('negPrompt').value = img.negative_prompt;
-      _updateNegBadge();
-    }
-    _updatePromptPreview();
-    _saveLastValues();
   } else {
     switchTab('basic');
-    if (img.prompt) document.getElementById('basicPrompt').value = img.prompt;
-    if (img.negative_prompt) {
-      document.getElementById('negPrompt').value = img.negative_prompt;
-      _updateNegBadge();
-    }
+    const basicPrompt = document.getElementById('basicPrompt');
+    if (basicPrompt) basicPrompt.value = img.prompt || '';
   }
 
+  if (img.negative_prompt) {
+    const negPrompt = document.getElementById('negPrompt');
+    if (negPrompt) negPrompt.value = img.negative_prompt;
+    updateNegBadge();
+  }
   if (img.seed !== undefined) document.getElementById('paramSeed').value = img.seed;
   if (img.steps !== undefined) {
     document.getElementById('paramSteps').value = img.steps;
-    _syncSliderFromInput('stepsSlider', 'stepsValue', img.steps);
+    syncSliderFromInput('stepsSlider', 'stepsValue', img.steps);
   }
   if (img.cfg_scale !== undefined) {
     document.getElementById('paramCfg').value = img.cfg_scale;
-    _syncSliderFromInput('cfgSlider', 'cfgValue', img.cfg_scale);
+    syncSliderFromInput('cfgSlider', 'cfgValue', img.cfg_scale);
   }
   if (img.aspect_ratio) {
     currentRatio = img.aspect_ratio;
-    _activateRatioBtn(img.aspect_ratio);
+    activateRatioBtn(img.aspect_ratio);
   }
-  _updateResolution();
-  const modeLabel = (adv && Object.keys(adv).length > 0) ? '高级模式' : '基础模式';
-  showToast(`✅ 参数已回填（${modeLabel}）`, 'success');
+
+  syncBatchEditorsFromPills();
+  updateResolution();
+  updatePromptPreview();
+  saveLastValues();
+
+  const modeLabel = adv && Object.keys(adv).length > 0 ? '高级模式' : '基础模式';
+  showToast(`已回填参数（${modeLabel}）`, 'success');
 }
 
-
-// ============================================================
-// v2.3: 自动保存/恢复上次使用的字段值
-// 将所有字段的当前值存入 localStorage，下次打开页面时自动恢复。
-// 数据量很小（几个字段的逻号分隔字符串），用 localStorage 即可。
-// ============================================================
-const LS_LASTVAL_KEY = 'anima_adv_lastvalues';
-
-function _saveLastValues() {
-  const data = {};
-  ADV_FIELDS.forEach(f => {
-    const pill = pillInputs.get(f.id);
-    if (pill) data[f.id] = pill.getValueSilent();
+function saveLastValues() {
+  const values = {};
+  ADV_FIELDS.forEach((field) => {
+    const pill = pillInputs.get(field.id);
+    if (pill) values[field.id] = pill.getValueSilent();
   });
-  try { localStorage.setItem(LS_LASTVAL_KEY, JSON.stringify(data)); } catch {}
+
+  const json = JSON.stringify(values);
+  try {
+    localStorage.setItem(LS_LASTVAL_KEY, json);
+  } catch {
+    // Ignore.
+  }
+
+  clearTimeout(saveLastValuesTimer);
+  saveLastValuesTimer = window.setTimeout(() => {
+    fetch('/api/preferences', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: 'adv_last_values', value: json }),
+    }).catch(() => {});
+  }, 2000);
 }
 
-function _loadLastValues() {
+async function loadLastValues() {
+  try {
+    const response = await fetch('/api/preferences?keys=adv_last_values');
+    if (response.ok) {
+      const data = await response.json();
+      if (data.adv_last_values) {
+        return JSON.parse(data.adv_last_values);
+      }
+    }
+  } catch {
+    // Ignore and fall back to localStorage.
+  }
+
   try {
     const raw = localStorage.getItem(LS_LASTVAL_KEY);
     return raw ? JSON.parse(raw) : {};
-  } catch { return {}; }
+  } catch {
+    return {};
+  }
+}
+
+function initFAB() {
+  const fab = document.getElementById('fabGenerate');
+  if (!fab) return;
+
+  fabDefaultText = fab.textContent || '✨';
+
+  let longPressTimer = 0;
+  let suppressClick = false;
+
+  fab.addEventListener('click', () => {
+    if (suppressClick) {
+      suppressClick = false;
+      return;
+    }
+    if (batchRunning) {
+      batchCancelled = true;
+      showToast('已请求取消连续出图', 'info');
+      return;
+    }
+    void doGenerate();
+  });
+
+  fab.addEventListener('pointerdown', () => {
+    longPressTimer = window.setTimeout(() => {
+      suppressClick = true;
+      if (batchRunning) {
+        batchCancelled = true;
+        showToast('已取消连续出图', 'info');
+        return;
+      }
+      showBatchPopup(fab);
+    }, 500);
+  });
+  fab.addEventListener('pointerup', () => clearTimeout(longPressTimer));
+  fab.addEventListener('pointercancel', () => clearTimeout(longPressTimer));
+  fab.addEventListener('pointermove', () => clearTimeout(longPressTimer));
+
+  let scrollTimer = 0;
+  window.addEventListener('scroll', () => {
+    fab.classList.add('fab-scrolling');
+    clearTimeout(scrollTimer);
+    scrollTimer = window.setTimeout(() => {
+      fab.classList.remove('fab-scrolling');
+    }, 300);
+  }, { passive: true });
+}
+
+function showBatchPopup(fab) {
+  document.querySelector('.fab-batch-popup')?.remove();
+
+  const popup = document.createElement('div');
+  popup.className = 'fab-batch-popup';
+
+  [1, 5, 10, 20].forEach((count) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = String(count);
+    button.addEventListener('click', () => {
+      popup.remove();
+      void batchGenerate(count, fab);
+    });
+    popup.appendChild(button);
+  });
+
+  document.body.appendChild(popup);
+
+  const close = (event) => {
+    if (!popup.contains(event.target) && event.target !== fab) {
+      popup.remove();
+      document.removeEventListener('pointerdown', close);
+    }
+  };
+  setTimeout(() => {
+    document.addEventListener('pointerdown', close);
+  }, 0);
+}
+
+async function batchGenerate(count, fab) {
+  batchCancelled = false;
+  batchRunning = true;
+  fab.classList.add('fab-busy');
+
+  try {
+    for (let index = 1; index <= count; index += 1) {
+      if (batchCancelled) break;
+
+      fab.textContent = `${index}/${count}`;
+      const payload = collectPayload({ silent: false });
+      try {
+        await runGenerationFlow(payload);
+      } catch (error) {
+        if (batchCancelled || error.message === '已取消') break;
+        showToast(`连续出图第 ${index} 张失败: ${error.message}`, 'error');
+      }
+    }
+
+    if (!batchCancelled) {
+      showToast(`连续出图完成（${count} 张）`, 'success');
+    }
+  } finally {
+    batchRunning = false;
+    batchCancelled = false;
+    fab.textContent = fabDefaultText;
+    fab.classList.remove('fab-busy');
+  }
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }

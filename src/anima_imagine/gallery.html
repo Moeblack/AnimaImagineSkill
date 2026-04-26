@@ -49,8 +49,8 @@
   <!-- === 模式切换 + 工具栏 === -->
   <div class="gen-header">
     <div class="gen-tabs">
-      <button id="tabBasic" class="gen-tab active">基础</button>
-      <button id="tabAdvanced" class="gen-tab">高级</button>
+      <button id="tabBasic" class="gen-tab">基础</button>
+      <button id="tabAdvanced" class="gen-tab active">高级</button>
     </div>
     <div class="gen-tools">
       <label class="gen-import-btn" title="导入 JSON 参数">
@@ -63,63 +63,103 @@
   </div>
 
   <!-- === 基础模式：单 prompt 输入 === -->
-  <div id="modeBasic">
+  <div id="modeBasic" style="display: none;">
     <textarea id="basicPrompt" placeholder="输入提示词... (支持标签自动补全)" rows="3"></textarea>
   </div>
 
   <!-- === 高级模式：结构化字段 === -->
-  <div id="modeAdvanced" style="display: none;">
-    <!-- v2.2: 按 Anima 官方标签结构分组，每个字段都是 multiline tag-pill 容器
-         pill 单击编辑、× 删除、可拖动排序、自动补全集成。
-         字段顺序对应最终 prompt 顺序：[quality][count][character][series][artist][general...] -->
+  <div id="modeAdvanced">
+    <!-- v3.0: 20 个字段分 6 组平铺，全中文标签。
+         pill 单击编辑、× 删除、可拖动排序、自动补全。
+         字段顺序对应最终 prompt 拼接顺序。 -->
     <div class="adv-grid">
 
       <div class="adv-group">
-        <div class="adv-group-title">官方头部 · Anima 必备</div>
+        <div class="adv-group-title">头部</div>
         <div class="adv-field">
           <label class="adv-label">质量 / 元 / 年份 / 安全</label>
           <div class="pill-host" id="advQuality" data-placeholder="masterpiece, best quality, newest, year 2025, safe"></div>
         </div>
         <div class="adv-field">
-          <label class="adv-label">人数</label>
+          <label class="adv-label">人数与性别</label>
           <div class="pill-host" id="advCount" data-placeholder="1girl / 2girls / no humans" data-single="1"></div>
         </div>
       </div>
 
       <div class="adv-group">
-        <div class="adv-group-title">角色 · 作品 · 画师</div>
+        <div class="adv-group-title">角色 · 画师</div>
         <div class="adv-field">
-          <label class="adv-label">角色名 <span class="adv-hint">character</span></label>
+          <label class="adv-label">角色</label>
           <div class="pill-host" id="advCharacter" data-placeholder="hatsune miku, arima kana"></div>
         </div>
         <div class="adv-field">
-          <label class="adv-label">作品名 <span class="adv-hint">copyright</span></label>
+          <label class="adv-label">作品</label>
           <div class="pill-host" id="advSeries" data-placeholder="vocaloid, oshi no ko"></div>
         </div>
         <div class="adv-field">
-          <label class="adv-label">画师 <span class="adv-hint">artist · 自动加 @</span></label>
+          <label class="adv-label">画师 <span class="adv-hint">自动加 @</span></label>
           <div class="pill-host" id="advArtist" data-placeholder="fkey, toridamono..."></div>
         </div>
       </div>
 
       <div class="adv-group">
-        <div class="adv-group-title">角色描述</div>
+        <div class="adv-group-title">体型 · 外观</div>
         <div class="adv-field">
-          <label class="adv-label">外表 <span class="adv-hint">发型 / 眼睛 / 身体</span></label>
+          <label class="adv-label">女性体型</label>
+          <div class="pill-host" id="advBodyF" data-placeholder="slim, petite, curvy, large breasts"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">男性体型</label>
+          <div class="pill-host" id="advBodyM" data-placeholder="muscular, slim, tall"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">外貌特征</label>
           <div class="pill-host" id="advAppearance" data-placeholder="long twintails, aqua hair, aqua eyes"></div>
         </div>
         <div class="adv-field">
-          <label class="adv-label">服饰 <span class="adv-hint">服装 / 配饰</span></label>
-          <div class="pill-host" id="advOutfit" data-placeholder="white dress, ribbon, thighhighs"></div>
+          <label class="adv-label">服装</label>
+          <div class="pill-host" id="advOutfit" data-placeholder="white dress, school uniform, bikini"></div>
         </div>
         <div class="adv-field">
-          <label class="adv-label">姿势 / 表情</label>
-          <div class="pill-host" id="advPose" data-placeholder="smile, sitting, looking at viewer"></div>
+          <label class="adv-label">饰品</label>
+          <div class="pill-host" id="advAccessories" data-placeholder="ribbon, glasses, earrings, hat"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">身体装饰</label>
+          <div class="pill-host" id="advBodyDeco" data-placeholder="tattoo, body paint, scar"></div>
         </div>
       </div>
 
       <div class="adv-group">
-        <div class="adv-group-title">画面 · 场景</div>
+        <div class="adv-group-title">动态 · 表情</div>
+        <div class="adv-field">
+          <label class="adv-label">表情</label>
+          <div class="pill-host" id="advExpression" data-placeholder="smile, blush, tears, open mouth"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">女性姿势</label>
+          <div class="pill-host" id="advPoseF" data-placeholder="sitting, lying, standing, arms up"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">男性姿势</label>
+          <div class="pill-host" id="advPoseM" data-placeholder="standing, sitting, leaning"></div>
+        </div>
+      </div>
+
+      <div class="adv-group">
+        <div class="adv-group-title">NSFW</div>
+        <div class="adv-field">
+          <label class="adv-label">涩情姿势</label>
+          <div class="pill-host" id="advNsfwPose" data-placeholder="spread legs, all fours, on back"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">涩情交互</label>
+          <div class="pill-host" id="advNsfwInteraction" data-placeholder="sex, cum, penetration"></div>
+        </div>
+      </div>
+
+      <div class="adv-group">
+        <div class="adv-group-title">场景 · 画面</div>
         <div class="adv-field">
           <label class="adv-label">构图 / 视角</label>
           <div class="pill-host" id="advComposition" data-placeholder="upper body, from above, dutch angle"></div>
@@ -133,8 +173,12 @@
           <div class="pill-host" id="advStyle" data-placeholder="watercolor, soft lighting, cinematic"></div>
         </div>
         <div class="adv-field">
-          <label class="adv-label">自然语言补充</label>
-          <div class="pill-host pill-host-tall" id="advNlCaption" data-placeholder="可写整段英文 / 中文自然语言描述"></div>
+          <label class="adv-label">Others / 其他标签</label>
+          <div class="pill-host" id="advOthers" data-placeholder="misc details, uncategorized tags"></div>
+        </div>
+        <div class="adv-field">
+          <label class="adv-label">自然语言描述</label>
+          <div class="pill-host pill-host-tall" id="advNlCaption" data-placeholder="可写整段英文/中文自然语言描述"></div>
         </div>
       </div>
     </div>
@@ -252,6 +296,13 @@
   <!-- 【v2.3】缩略图条从元信息区分离，独立固定在底部 -->
   <div class="lb-thumbstrip" id="lbThumbstrip"></div>
 </div>
+
+<!-- ============================================================
+     【v3.0】悬浮生图按钮（FAB）
+     手机/平板端显示在右下角，方便在画廊浏览时一键出图。
+     长按弹出连续出图数量选择。桌面端隐藏。
+     ============================================================ -->
+<button class="fab-generate" id="fabGenerate" title="生成图片">✨</button>
 
 <script type="module" src="/static/js/app.js"></script>
 </body>

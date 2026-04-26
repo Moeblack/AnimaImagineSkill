@@ -17,7 +17,8 @@ from pathlib import Path
 
 from PIL import Image
 
-THUMB_WIDTH = 320
+# 【v3.0】缩略图宽度从 320 提升到 768，使用 WebP 格式 quality=90
+THUMB_WIDTH = 768
 
 
 class FileStorage:
@@ -54,13 +55,13 @@ class FileStorage:
         image_path = date_dir / f"{filename}.png"
         _atomic_save_image(image, image_path, "PNG")
 
-        # --- 缩略图 JPG ---
+        # --- 【v3.0】缩略图改为 768px WebP q90，更清晰且文件更小 ---
         thumb = image.copy()
         ratio = THUMB_WIDTH / image.width
         thumb_h = int(image.height * ratio)
         thumb = thumb.resize((THUMB_WIDTH, thumb_h), Image.LANCZOS)
-        thumb_path = thumb_dir / f"{filename}.jpg"
-        _atomic_save_image(thumb, thumb_path, "JPEG", quality=82)
+        thumb_path = thumb_dir / f"{filename}.webp"
+        _atomic_save_image(thumb, thumb_path, "WEBP", quality=90)
 
         # --- 元数据 JSON（原子写入）---
         tags = [t.strip() for t in metadata.get("prompt", "").split(",") if t.strip()]
@@ -77,7 +78,8 @@ class FileStorage:
         return {
             "image_path": str(image_path),
             "relative_path": f"{date_str}/{filename}.png",
-            "thumb_relative": f"{date_str}/thumbs/{filename}.jpg",
+            # 【v3.0】缩略图后缀改为 .webp
+            "thumb_relative": f"{date_str}/thumbs/{filename}.webp",
             "meta": meta,
         }
 
@@ -105,10 +107,12 @@ class FileStorage:
         if json_path.exists():
             json_path.rename(trash_dir / json_path.name)
 
-        # 移动缩略图
+        # 【v3.0】移动缩略图：优先移动 .webp，fallback 移动旧 .jpg
         thumb_dir = img_full.parent / "thumbs"
-        thumb_path = thumb_dir / img_full.name.replace(".png", ".jpg")
-        if thumb_path.exists():
+        thumb_webp = thumb_dir / img_full.name.replace(".png", ".webp")
+        thumb_jpg = thumb_dir / img_full.name.replace(".png", ".jpg")
+        thumb_path = thumb_webp if thumb_webp.exists() else (thumb_jpg if thumb_jpg.exists() else None)
+        if thumb_path and thumb_path.exists():
             trash_thumbs = trash_dir / "thumbs"
             trash_thumbs.mkdir(parents=True, exist_ok=True)
             thumb_path.rename(trash_thumbs / thumb_path.name)

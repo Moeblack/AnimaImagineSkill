@@ -86,6 +86,22 @@ class TestImageDB(unittest.TestCase):
         dates = self.db.list_dates()
         self.assertEqual(dates, ["2026-04-16", "2026-04-15"])
 
+    def test_tag_filter_combines_with_date_and_pagination(self):
+        # 前端性能优化依赖数据库直接完成标签过滤、日期过滤和分页。
+        # 这个测试先定义通用查询行为，避免后续在浏览器里为某个页面写特判扫描逻辑。
+        self.db.upsert(self._make_record(
+            "2026-04-15/100000_1", date="2026-04-15", tags=["cat girl", "blue eyes"], created_at="2026-04-15T10:00:00"
+        ))
+        self.db.upsert(self._make_record(
+            "2026-04-15/110000_2", date="2026-04-15", tags=["dog boy"], created_at="2026-04-15T11:00:00"
+        ))
+        self.db.upsert(self._make_record(
+            "2026-04-16/120000_3", date="2026-04-16", tags=["cat ears"], created_at="2026-04-16T12:00:00"
+        ))
+        images = self.db.list_images(date="2026-04-15", tag="cat", limit=1, offset=0)
+        self.assertEqual([i["id"] for i in images], ["2026-04-15/100000_1"])
+        self.assertEqual(self.db.count(date="2026-04-15", tag="cat"), 1)
+
     def test_import_from_json(self):
         json_dir = self.tmp / "output" / "2026-04-20"
         json_dir.mkdir(parents=True)

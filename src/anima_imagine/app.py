@@ -32,6 +32,7 @@ from anima_imagine.routers.gallery import register_gallery_routes
 from anima_imagine.routers.generate import register_generate_routes
 from anima_imagine.routers.mcp import register_mcp_tools
 from anima_imagine.routers.pages import register_page_routes
+from anima_imagine.routers.preferences import register_preferences_routes
 
 
 _HERE = Path(__file__).resolve().parent
@@ -73,6 +74,8 @@ def create_app(cfg: Config) -> tuple:
     register_generate_routes(mcp, gen_service, cfg, rate_limiter)
     register_page_routes(mcp, cfg, pipeline, codex)
     register_mcp_tools(mcp, gen_service, codex, cfg)
+    # 【v3.0 新增】用户偏好 API（提示词缓存/预设/自定义标签全平台同步）
+    register_preferences_routes(mcp, db)
 
     # --- 中间件 ---
     user_middleware = []

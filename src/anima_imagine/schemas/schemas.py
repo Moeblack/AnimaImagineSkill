@@ -47,17 +47,28 @@ class GenerateRequest:
     character: str = ""
     series: str = ""
     artist: str = ""
-    # general tags 子槽（v2.2 新增）
+    # 【v3.0 新增】体型子槽：男女体型分开描述
+    body_type_f: str = ""
+    body_type_m: str = ""
+    # general tags 子槽（v2.2 新增，v3.0 扩展）
     appearance: str = ""
     outfit: str = ""
-    pose_expression: str = ""
+    accessories: str = ""              # 【v3.0 新增】饰品（从 outfit 拆分）
+    body_decoration: str = ""          # 【v3.0 新增】身体装饰（纹身、彩绘等）
+    expression: str = ""               # 【v3.0 新增】表情（从 pose_expression 拆分）
+    pose_f: str = ""                   # 【v3.0 新增】女性姿势（从 pose_expression 拆分）
+    pose_m: str = ""                   # 【v3.0 新增】男性姿势
+    nsfw_pose: str = ""                # 【v3.0 新增】涩情姿势
+    nsfw_interaction: str = ""         # 【v3.0 新增】涩情交互
     composition: str = ""
     environment: str = ""
     style: str = ""
+    others: str = ""                   # 【v3.0 新增】其他标签（无法归类但仍属于 tag）
     nl_caption: str = ""
-    # 后向兼容：旧字段名
+    # 后向兼容：旧字段名（v2.x 兼容）
     tags: str = ""
     nltags: str = ""
+    pose_expression: str = ""          # 【v3.0 兼容】旧字段，映射到 pose_f
 
     @classmethod
     def parse(cls, data: dict) -> "GenerateRequest":
@@ -77,16 +88,27 @@ class GenerateRequest:
             character=str(data.get("character", "")),
             series=str(data.get("series", "")),
             artist=str(data.get("artist", "")),
+            # 【v3.0 新增】体型、饰品、身体装饰、表情、姿势(男女分开)、NSFW
+            body_type_f=str(data.get("body_type_f", "")),
+            body_type_m=str(data.get("body_type_m", "")),
             appearance=str(data.get("appearance", "")),
             outfit=str(data.get("outfit", "")),
-            pose_expression=str(data.get("pose_expression", "")),
+            accessories=str(data.get("accessories", "")),
+            body_decoration=str(data.get("body_decoration", "")),
+            expression=str(data.get("expression", "")),
+            pose_f=str(data.get("pose_f", "")),
+            pose_m=str(data.get("pose_m", "")),
+            nsfw_pose=str(data.get("nsfw_pose", "")),
+            nsfw_interaction=str(data.get("nsfw_interaction", "")),
             composition=str(data.get("composition", "")),
             environment=str(data.get("environment", "")),
             style=str(data.get("style", "")),
+            others=str(data.get("others", "")),
             nl_caption=str(data.get("nl_caption", "")),
-            # 后向兼容
+            # 后向兼容（v2.x 旧字段）
             tags=str(data.get("tags", "")),
             nltags=str(data.get("nltags", "")),
+            pose_expression=str(data.get("pose_expression", "")),
         )
         # 范围校验
         if not 1 <= req.steps <= 100:
@@ -147,6 +169,7 @@ class ImagesQuery:
     date: str | None = None
     limit: int = 200
     offset: int = 0
+    tag: str | None = None
     favorited_only: bool = False
 
     @classmethod
@@ -161,6 +184,9 @@ class ImagesQuery:
             date=params.get("date") or None,
             limit=limit,
             offset=offset,
+            # 前端性能优化：把标签关键字作为通用查询条件传给后端，目的在于分页前先过滤。
+            # 这里直接 trim 成 None/字符串，后续数据库查询与日期、收藏条件共享同一套组合逻辑。
+            tag=(str(params.get("tag") or "").strip() or None),
             favorited_only=params.get("favorited") in ("1", "true"),
         )
 

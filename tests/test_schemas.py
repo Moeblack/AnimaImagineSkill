@@ -62,6 +62,12 @@ class TestImagesQuery(unittest.TestCase):
         with self.assertRaises(ValueError):
             ImagesQuery.parse({"limit": "0"})
 
+    def test_tag_filter_trimmed(self):
+        # 前端性能优化需要把标签过滤下推到 /api/images，避免浏览器一次拉全量图片再扫描。
+        # 这里先锁定查询参数会被标准化，后续实现按同一个通用 tag 字段组合分页和日期筛选。
+        q = ImagesQuery.parse({"tag": "  miku  ", "limit": "120"})
+        self.assertEqual(q.tag, "miku")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,9 +8,14 @@
  */
 
 import { sortedTags, dataReady } from './tag-data.js';
+import { syncCustomTagsFromServer } from './tag-data-manager.js';
 import { escapeHtml, formatCount } from './utils.js';
 
 const MAX_SUGGESTIONS = 12;
+let tagDataLoadPromise = null;
+
+// 前端性能优化：自动补全按需加载标签库，目的在于不让图库首屏承担大型 CSV 下载和解析成本。
+// 生成面板打开时会预热；如果用户直接输入，这里会触发同一条同步链路。
 
 // ============================================================
 // 匹配
@@ -114,7 +119,7 @@ class AutocompleteUI {
   }
 
   update(target) {
-    if (!dataReady) { this.hide(); return; }
+    if (!dataReady) { this.target = target; ensureTagDataForAutocomplete(target); this.hide(); return; }
     this.target = target;
     const partial = target.kind === 'pill'
       ? getPartialFromEditor(target.el)
@@ -202,6 +207,18 @@ class AutocompleteUI {
 }
 
 const acUI = new AutocompleteUI();
+
+function ensureTagDataForAutocomplete(target) {
+  // 前端性能优化：多个输入框共享同一个加载 Promise，目的在于避免重复拉取和重复解析标签数据。
+  if (tagDataLoadPromise) return;
+  tagDataLoadPromise = syncCustomTagsFromServer().then(() => {
+    tagDataLoadPromise = null;
+    if (acUI.target === target) acUI.update(target);
+  }).catch((err) => {
+    tagDataLoadPromise = null;
+    console.warn('[Autocomplete] 标签库加载失败:', err.message);
+  });
+}
 
 // ============================================================
 // 公开接口

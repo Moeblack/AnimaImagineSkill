@@ -15,14 +15,35 @@ import { tagClass, escapeHtml, showToast } from './utils.js';
 // ============================================================
 
 let allImages = [];
-let lastJsonString = '';
+const imageByPath = new Map();
 let selectMode = false;
 const selectedPaths = new Set();
 let lastSelectedIndex = -1;
 
 let galleryEl, datePickerEl, tagFilterEl, statsEl;
+let loadStatusEl = null;
 let onOpenLightbox = null;
 let onFillGenerator = null;
+
+// 前端性能优化：把图库拆成分页请求和分帧渲染，目的在于避免首屏一次拉取 2000 张并同步写入 DOM。
+// PAGE_SIZE 控制网络和 JSON 解析批量，RENDER_CHUNK_SIZE 控制每一帧插入的卡片数量。
+const PAGE_SIZE = 120;
+const RENDER_CHUNK_SIZE = 36;
+const FILTER_DEBOUNCE_MS = 180;
+
+let totalImages = 0;
+let nextOffset = 0;
+let hasMore = true;
+let isLoading = false;
+let requestVersion = 0;
+let filterTimer = 0;
+
+function isEditableTarget(target) {
+  if (!target) return false;
+  if (target.isContentEditable) return true;
+  if (target.closest?.('[contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]')) return true;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+}
 
 // ============================================================
 // 初始化
@@ -37,12 +58,12 @@ export function init(options = {}) {
   onOpenLightbox = options.onOpenLightbox || null;
   onFillGenerator = options.onFillGenerator || null;
 
-  datePickerEl.addEventListener('change', () => applyFilter());
-  tagFilterEl.addEventListener('input', () => applyFilter());
+  datePickerEl.addEventListener('change', () => loadData());
+  tagFilterEl.addEventListener('input', scheduleGalleryReload);
 
   _initSelectMode();
+  _initIncrementalLoader();
   loadData();
-  setInterval(loadData, 30000);
 }
 
 // ============================================================
@@ -50,41 +71,93 @@ export function init(options = {}) {
 // ============================================================
 
 export async function loadData() {
-  if (allImages.length === 0) {
-    galleryEl.innerHTML = '<div class="loading">正在寻找精美画作...</div>';
-  }
+  // 前端性能优化：每次显式刷新都重建分页游标，目的在于让日期/标签筛选从第一页重新按需加载。
+  requestVersion += 1;
+  allImages = [];
+  imageByPath.clear();
+  totalImages = 0;
+  nextOffset = 0;
+  hasMore = true;
+  isLoading = false;
+  galleryEl.innerHTML = '<div class="loading">正在寻找精美画作...</div>';
+  statsEl.textContent = '';
+  _updateLoadStatus('正在加载...');
+  await loadNextPage(requestVersion);
+}
+
+function scheduleGalleryReload() {
+  // 前端性能优化：输入框变化会连续触发，用短延迟合并请求，目的在于减少无意义的网络和重绘。
+  clearTimeout(filterTimer);
+  filterTimer = window.setTimeout(() => loadData(), FILTER_DEBOUNCE_MS);
+}
+
+async function loadNextPage(version = requestVersion) {
+  if (isLoading || !hasMore) return;
+  isLoading = true;
+  _updateLoadStatus('正在加载...');
   try {
-    // 【v2.3】limit 从默认 200 提高到 2000，让图库一次加载更多图片
-    const resp = await fetch('/api/images?limit=2000');
+    const query = _buildImageQuery();
+    query.set('limit', String(PAGE_SIZE));
+    query.set('offset', String(nextOffset));
+    const resp = await fetch(`/api/images?${query.toString()}`);
     if (resp.status === 401) { window.location.href = '/login'; return; }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const data = await resp.json();
-
-    const currentJsonString = JSON.stringify(data.images);
-    if (currentJsonString === lastJsonString) return;
-
-    const newImages = data.images || [];
-    const oldSet = new Set(allImages.map(i => i.filename));
-    const addedImages = newImages.filter(i => !oldSet.has(i.filename));
-
-    lastJsonString = currentJsonString;
-    allImages = newImages;
+    if (version !== requestVersion) return;
 
     // 填充日期选择器
     const dates = data.dates || [];
     const currentPickerVal = datePickerEl.value;
     datePickerEl.innerHTML = '<option value="">全部日期</option>' +
-      dates.map(d => `<option value="${d}">${d}</option>`).join('');
+      dates.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
     datePickerEl.value = currentPickerVal;
 
-    if (oldSet.size === 0 || addedImages.length === 0 || addedImages.length > 50) {
-      applyFilter();
-    } else {
-      applyFilter(addedImages);
+    if (nextOffset === 0) {
+      galleryEl.innerHTML = '';
     }
-  } catch (err) {
+
+    totalImages = data.total || 0;
+    const pageImages = data.images || [];
+    _rememberImages(pageImages);
+    nextOffset += pageImages.length;
+    hasMore = nextOffset < totalImages && pageImages.length > 0;
+
     if (allImages.length === 0) {
+      galleryEl.innerHTML = '<div class="empty">还没有图片，快去生图面板生成吧！</div>';
+    } else if (pageImages.length > 0) {
+      await appendCardsChunked(pageImages, false, version);
+    }
+    // 前端性能优化：分帧渲染期间可能发生新筛选；版本变更后停止旧批次更新统计，目的在于避免状态回写串台。
+    if (version !== requestVersion) return;
+    _updateStats();
+  } catch (err) {
+    if (version === requestVersion && allImages.length === 0) {
       galleryEl.innerHTML = `<div class="empty">加载失败: ${err.message}</div>`;
     }
+  } finally {
+    if (version === requestVersion) {
+      isLoading = false;
+      _updateLoadStatus();
+    }
+  }
+}
+
+function _buildImageQuery() {
+  // 前端性能优化：日期和标签直接成为 API 查询参数，目的在于让后端在分页之前裁剪数据集。
+  const query = new URLSearchParams();
+  const date = datePickerEl.value;
+  const tag = tagFilterEl.value.trim();
+  if (date) query.set('date', date);
+  if (tag) query.set('tag', tag);
+  return query;
+}
+
+function _rememberImages(images) {
+  // 前端性能优化：维护 path -> image 索引，目的在于收藏、回填、批量复制不再反复线性扫描当前页数组。
+  for (const img of images) {
+    const path = imagePath(img);
+    allImages.push(img);
+    imageByPath.set(path, img);
   }
 }
 
@@ -92,46 +165,59 @@ export async function loadData() {
 // 过滤与渲染
 // ============================================================
 
-function applyFilter(addedImages = null) {
-  const date = datePickerEl.value;
-  const kw = tagFilterEl.value.trim().toLowerCase();
-
-  if (addedImages) {
-    let filteredNew = addedImages;
-    if (date) filteredNew = filteredNew.filter(i => i.date === date);
-    if (kw) filteredNew = filteredNew.filter(i =>
-      (i.tags || []).some(t => t.toLowerCase().includes(kw))
-    );
-    if (filteredNew.length > 0) {
-      const empty = galleryEl.querySelector('.empty');
-      if (empty) empty.remove();
-      const newHtmls = filteredNew.reverse().map(i => renderCard(i, true)).join('');
-      galleryEl.insertAdjacentHTML('afterbegin', newHtmls);
+function _initIncrementalLoader() {
+  // 前端性能优化：用 IntersectionObserver 在接近底部时加载下一页，目的在于用浏览行为驱动网络请求。
+  loadStatusEl = document.createElement('div');
+  loadStatusEl.className = 'gallery-load-status';
+  galleryEl.after(loadStatusEl);
+  const observer = new IntersectionObserver((entries) => {
+    if (entries.some(entry => entry.isIntersecting)) {
+      void loadNextPage();
     }
-    statsEl.textContent = `${allImages.length} 张图片`;
-  } else {
-    let filtered = allImages;
-    if (date) filtered = filtered.filter(i => i.date === date);
-    if (kw) filtered = filtered.filter(i =>
-      (i.tags || []).some(t => t.toLowerCase().includes(kw))
-    );
-    renderAll(filtered);
+  }, { rootMargin: '900px 0px' });
+  observer.observe(loadStatusEl);
+}
+
+async function appendCardsChunked(images, isFlash = false, version = requestVersion) {
+  // 前端性能优化：分帧追加卡片，目的在于把大批 DOM 写入拆开，避免一次渲染阻塞主线程。
+  for (let i = 0; i < images.length; i += RENDER_CHUNK_SIZE) {
+    if (version !== requestVersion) return;
+    const chunk = images.slice(i, i + RENDER_CHUNK_SIZE);
+    galleryEl.insertAdjacentHTML('beforeend', chunk.map(img => renderCard(img, isFlash)).join(''));
+    if (i + RENDER_CHUNK_SIZE < images.length) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+    }
   }
 }
 
-function renderAll(images) {
-  if (images.length === 0) {
-    galleryEl.innerHTML = '<div class="empty">还没有图片，快去生图面板生成吧！</div>';
+function _updateStats() {
+  // 前端性能优化：统计展示已加载/总量，目的在于让分页加载状态对用户可见。
+  statsEl.textContent = totalImages > allImages.length
+    ? `${allImages.length}/${totalImages} 张图片`
+    : `${totalImages} 张图片`;
+}
+
+function _updateLoadStatus(text = '') {
+  // 前端性能优化：底部状态同时是滚动加载哨兵，目的在于无需额外滚动监听。
+  if (text) {
+    loadStatusEl.textContent = text;
+  } else if (hasMore) {
+    loadStatusEl.textContent = `继续向下滚动加载更多（${allImages.length}/${totalImages}）`;
+  } else if (totalImages > 0) {
+    loadStatusEl.textContent = `已加载全部 ${totalImages} 张`;
   } else {
-    galleryEl.innerHTML = images.map(i => renderCard(i, false)).join('');
+    loadStatusEl.textContent = '';
   }
-  statsEl.textContent = `${images.length} 张图片`;
+}
+
+function imagePath(img) {
+  return `${img.date || ''}/${img.filename || ''}`;
 }
 
 function renderCard(img, isFlash = false) {
   const date = img.date || '';
   const fn = img.filename || '';
-  const relPath = `${date}/${fn}`;
+  const relPath = imagePath(img);
   const thumbUrl = `/api/image?path=${encodeURIComponent(relPath)}&thumb=1`;
   const fullUrl = `/api/image?path=${encodeURIComponent(relPath)}`;
   const tags = (img.tags || []).slice(0, 20);
@@ -145,7 +231,7 @@ function renderCard(img, isFlash = false) {
     <div class="card ${isFlash ? 'flash' : ''}" data-path="${escapeHtml(relPath)}">
       <div class="card-checkbox" data-path="${escapeHtml(relPath)}"></div>
       <button class="card-fav${isFav}" data-path="${escapeHtml(relPath)}" title="收藏">${favText}</button>
-      <img src="${thumbUrl}" alt="" loading="lazy" data-full="${fullUrl}" />
+      <img src="${thumbUrl}" alt="" loading="lazy" decoding="async" width="${img.width}" height="${img.height}" data-full="${fullUrl}" />
       <div class="card-actions">
         <button class="card-action-btn" data-action="download" data-url="${fullUrl}" title="下载">⬇</button>
         <button class="card-action-btn" data-action="copy" data-prompt="${escapeHtml(img.prompt || '')}" title="复制 Prompt">📋</button>
@@ -174,7 +260,8 @@ export function setupGalleryEvents() {
     const tagEl = e.target.closest('.tag');
     if (tagEl) {
       tagFilterEl.value = tagEl.dataset.tag || tagEl.textContent;
-      applyFilter();
+      // 前端性能优化：点击标签也走后端 tag 查询，目的在于保持分页前过滤而不是本地全量重绘。
+      void loadData();
       return;
     }
 
@@ -247,8 +334,8 @@ async function _toggleFavorite(btn) {
     if (resp.ok) {
       btn.classList.toggle('favorited');
       btn.textContent = btn.classList.contains('favorited') ? '★' : '☆';
-      // v2: 同步到 allImages 数据，保证 Lightbox 和卡片状态一致
-      const img = allImages.find(i => `${i.date}/${i.filename}` === path);
+      // 前端性能优化：通过 path 索引同步收藏状态，目的在于避免每次收藏都线性扫描已加载图片。
+      const img = imageByPath.get(path);
       if (img) img.favorited = !isFav;
     }
   } catch (err) {
@@ -274,7 +361,8 @@ function _handleCardAction(btn) {
     }
     case 'fill': {
       const path = btn.dataset.path;
-      const img = allImages.find(i => `${i.date}/${i.filename}` === path);
+      // 前端性能优化：回填按钮使用 path 索引取图，目的在于让操作成本不随已加载卡片数增长。
+      const img = imageByPath.get(path);
       if (img && onFillGenerator) onFillGenerator(img);
       break;
     }
@@ -302,18 +390,19 @@ async function _deleteImages(paths) {
     });
     if (resp.ok) {
       const data = await resp.json();
-      const deletedSet = new Set(data.deleted || []);
-      // 从 allImages 移除
-      allImages = allImages.filter(i => {
-        const id = `${i.date}/${i.filename}`.replace('.png', '');
-        return !deletedSet.has(id);
-      });
-      // 从 DOM 移除卡片
-      for (const path of paths) {
+      const deletedPaths = new Set((data.deleted || []).map(id => `${id}.png`));
+      // 前端性能优化：删除后同步维护数组、索引和分页游标，目的在于不依赖下一次全量刷新修正状态。
+      allImages = allImages.filter(img => !deletedPaths.has(imagePath(img)));
+      for (const path of deletedPaths) {
+        imageByPath.delete(path);
+        selectedPaths.delete(path);
         const card = galleryEl.querySelector(`.card[data-path="${CSS.escape(path)}"]`);
         if (card) card.remove();
       }
-      lastJsonString = ''; // 强制下次刷新
+      totalImages = Math.max(0, totalImages - deletedPaths.size);
+      nextOffset = allImages.length;
+      _updateStats();
+      _updateLoadStatus();
       showToast(`✅ 已删除 ${data.count || paths.length} 张`, 'success');
     }
   } catch (err) {
@@ -335,8 +424,9 @@ function _initSelectMode() {
 
   document.addEventListener('keydown', (e) => {
     if (!selectMode) return;
+    if (isEditableTarget(document.activeElement)) return;
     if (e.key === 'Escape') { _exitSelectMode(); e.preventDefault(); }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
       e.preventDefault();
       _selectAll();
     }
@@ -449,7 +539,8 @@ function _batchCopy() {
   if (selectedPaths.size === 0) return;
   const prompts = [];
   for (const path of selectedPaths) {
-    const img = allImages.find(i => `${i.date}/${i.filename}` === path);
+    // 前端性能优化：批量复制复用 path 索引，目的在于选中数量增大时仍保持直接查找。
+    const img = imageByPath.get(path);
     if (img?.prompt) prompts.push(img.prompt);
   }
   navigator.clipboard.writeText(prompts.join('\n\n')).then(() => {
@@ -470,12 +561,6 @@ async function _batchDelete() {
 // ============================================================
 
 export function getFilteredImages() {
-  const date = datePickerEl.value;
-  const kw = tagFilterEl.value.trim().toLowerCase();
-  let filtered = allImages;
-  if (date) filtered = filtered.filter(i => i.date === date);
-  if (kw) filtered = filtered.filter(i =>
-    (i.tags || []).some(t => t.toLowerCase().includes(kw))
-  );
-  return filtered;
+  // 前端性能优化：当前 allImages 已由后端按日期/标签过滤并分页，Lightbox 直接使用已加载窗口。
+  return allImages;
 }

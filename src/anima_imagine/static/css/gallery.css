@@ -147,9 +147,18 @@ body {
 }
 .adv-field:last-child { margin-bottom: 0; }
 .adv-label {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 11px; color: #888;
   margin-bottom: 3px;
+}
+.adv-label-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
 }
 
 /* --- v2.1: prompt 预览区 --- */
@@ -373,6 +382,9 @@ body {
   border-radius: 12px; overflow: hidden;
   transition: transform .2s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
+  /* 前端性能优化：让浏览器跳过离屏卡片绘制，目的在于降低大量图库滚动时的主线程压力。 */
+  content-visibility: auto;
+  contain-intrinsic-size: 360px 520px;
 }
 .card:hover { transform: translateY(-4px); box-shadow: 0 10px 20px rgba(0,0,0,0.3); }
 
@@ -385,9 +397,17 @@ body {
 
 .card img {
   width: 100%; display: block; cursor: pointer;
+  height: auto;
+  /* 前端性能优化：配合 img width/height 属性保留缩略图比例，目的在于减少图片解码前后的布局抖动。 */
   background: #252545; min-height: 80px;
 }
 .card .info { padding: 8px 10px; }
+
+.gallery-load-status {
+  /* 前端性能优化：这个元素同时作为滚动加载哨兵和状态提示，目的在于避免额外滚动监听。 */
+  text-align: center; padding: 12px 20px 32px;
+  color: #666; font-size: 12px;
+}
 
 /* --- 标签 --- */
 .tags {
@@ -775,32 +795,105 @@ body.select-mode .header { display: none; }
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 0;
   background: #2a2a48;
   color: #d8d8e8;
-  border-radius: 4px;
+  border-radius: 8px;
   font-size: 12px;
   line-height: 20px;
-  padding: 1px 4px 1px 8px;
-  cursor: grab;
+  padding: 0;
   user-select: none;
-  border: 1px solid transparent;
-  transition: transform 0.1s, opacity 0.1s;
+  border: 1px solid rgba(255,255,255,0.08);
+  transition: transform 0.1s, opacity 0.1s, border-color 0.15s, box-shadow 0.15s;
+  overflow: hidden;
 }
-.pill:hover { background: #3a3a5c; }
-.pill.dragging { opacity: 0.4; cursor: grabbing; }
-.pill-text { pointer-events: auto; }
-.pill-remove {
-  background: none;
+.pill:hover {
+  border-color: rgba(167, 139, 250, 0.32);
+  box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.08);
+}
+.pill.dragging {
+  opacity: 0.4;
+  box-shadow: none;
+}
+.pill.editing {
+  border-color: rgba(167, 139, 250, 0.5);
+  box-shadow: 0 0 0 2px rgba(167, 139, 250, 0.14);
+}
+.pill-drag-handle {
+  min-width: 28px;
+  align-self: stretch;
   border: none;
-  color: #888;
-  cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
-  padding: 0 4px;
-  border-radius: 3px;
+  border-right: 1px dashed rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.78);
+  cursor: grab;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 8px;
+  letter-spacing: 1px;
 }
-.pill-remove:hover { color: #f87171; background: rgba(248, 113, 113, 0.1); }
+.pill-drag-handle:hover {
+  background: rgba(255,255,255,0.14);
+}
+.pill-drag-handle:active {
+  cursor: grabbing;
+}
+.pill-copy {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 2px 10px;
+  max-width: 320px;
+}
+.pill-copy:hover {
+  background: rgba(255,255,255,0.07);
+}
+.pill-copy-text {
+  display: inline-block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pill-copy-text::after {
+  content: "  · 点按复制 / 双击编辑";
+  color: rgba(255,255,255,0.34);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.pill.editing .pill-copy-text::after {
+  display: none;
+}
+.pill-edit-input {
+  min-width: 120px;
+  max-width: 320px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: #f5f5ff;
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 20px;
+}
+.pill-remove {
+  background: rgba(248, 113, 113, 0.1);
+  border: none;
+  border-left: 1px solid rgba(255,255,255,0.08);
+  color: #f3a4af;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  align-self: stretch;
+  min-width: 28px;
+  padding: 0 8px;
+}
+.pill-remove:hover {
+  color: #ffd1d8;
+  background: rgba(248, 113, 113, 0.24);
+}
 
 /* pill 按类别上色 */
 .pill[data-category="artist"]    { background: #3b1f6e; color: #c4a8ff; }
@@ -822,6 +915,127 @@ body.select-mode .header { display: none; }
   letter-spacing: 0;
 }
 
+/* v3.0: Pill interaction polish */
+.pill-input {
+  border-radius: 10px;
+  padding: 6px;
+  min-height: 44px;
+  gap: 6px;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+.pill-input:hover {
+  border-color: #34345a;
+  background: #131322;
+}
+
+.pill-input:focus-within {
+  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.12);
+}
+
+.pill-host-tall .pill-input {
+  min-height: 92px;
+}
+
+.pill-input.pill-input-has-pills::after {
+  content: attr(data-ops-hint);
+  flex-basis: 100%;
+  order: 999;
+  font-size: 10px;
+  line-height: 1.4;
+  color: rgba(192, 192, 216, 0.5);
+  padding: 2px 4px 0;
+}
+
+.pill-placeholder {
+  top: 11px;
+  left: 12px;
+}
+
+.pill {
+  align-items: stretch;
+  border-radius: 12px;
+  line-height: 18px;
+  max-width: 100%;
+  min-height: 32px;
+}
+
+.pill-drag-handle {
+  width: 32px;
+  min-width: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: rgba(255,255,255,0.1);
+}
+
+.pill-drag-handle:hover {
+  background: rgba(255,255,255,0.16);
+}
+
+.pill-drag-grip {
+  font-size: 11px;
+  letter-spacing: 1px;
+  font-weight: 700;
+  opacity: 0.9;
+}
+
+.pill-copy {
+  align-items: flex-start;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 32px;
+  padding: 6px 10px;
+  max-width: min(100%, 520px);
+  text-align: left;
+}
+
+.pill-copy-text {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
+}
+
+.pill-copy-text::after,
+.pill.editing .pill-copy-text::after {
+  content: none;
+}
+
+.pill-edit-input {
+  flex: 1 1 140px;
+  min-width: 140px;
+  max-width: min(100%, 520px);
+  padding: 6px 10px;
+  line-height: 18px;
+}
+
+.pill-remove {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pill-input-single .pill {
+  max-width: none;
+  flex: 0 0 auto;
+}
+
+.pill-input-single.pill-input-has-pills::after {
+  content: none;
+}
+
+.pill-input-single .pill-copy {
+  max-width: none;
+}
+
+.pill-input-single .pill-copy-text {
+  white-space: nowrap;
+}
+
 /* ============================================================
    v2.3: 字段预设按钮和弹窗
    ============================================================ */
@@ -834,6 +1048,16 @@ body.select-mode .header { display: none; }
   vertical-align: middle; margin-left: 4px;
 }
 .preset-btn:hover { opacity: 1; }
+.adv-edit-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  opacity: 0.45;
+  transition: opacity 0.15s;
+}
+.adv-edit-btn:hover { opacity: 1; }
 
 /* 预设弹窗 */
 .preset-popover {
@@ -890,6 +1114,98 @@ body.select-mode .header { display: none; }
   line-height: 1;
 }
 .preset-item-del:hover { color: #f66; }
+
+.batch-edit-area[hidden] {
+  display: none !important;
+}
+.batch-edit-area {
+  margin-top: 6px;
+  padding: 10px;
+  border: 1px solid #2a2a44;
+  border-radius: 8px;
+  background: rgba(15, 15, 26, 0.95);
+}
+.batch-edit-textarea {
+  width: 100%;
+  min-height: 88px;
+  resize: vertical;
+  background: #0b0b16;
+  border: 1px solid #343457;
+  border-radius: 8px;
+  color: #e8e8f3;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  outline: none;
+}
+.batch-edit-textarea:focus {
+  border-color: #a78bfa;
+}
+.batch-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.batch-edit-actions button {
+  border: 1px solid #3a3a5c;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.batch-edit-confirm {
+  background: linear-gradient(135deg, #a78bfa, #60a5fa);
+  border-color: transparent !important;
+  color: #fff;
+  font-weight: 600;
+}
+.batch-edit-cancel {
+  background: #22223a;
+  color: #d8d8e8;
+}
+
+.pill-touch-clone {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.86;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+}
+
+.pill-context-menu {
+  position: fixed;
+  z-index: 10010;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 132px;
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(20, 20, 34, 0.96);
+  border: 1px solid rgba(167, 139, 250, 0.2);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(14px);
+}
+.pill-context-menu button {
+  border: none;
+  border-radius: 8px;
+  background: #24243a;
+  color: #ececf6;
+  padding: 9px 10px;
+  text-align: left;
+  font-size: 12px;
+  cursor: pointer;
+}
+.pill-context-menu button:hover {
+  background: #313152;
+}
+.pill-context-menu button.danger {
+  color: #ff9aa8;
+}
+.pill-context-menu button.danger:hover {
+  background: rgba(248, 113, 113, 0.14);
+}
 
 
 
@@ -1046,4 +1362,80 @@ dialog.tdm-dialog::backdrop {
 .tdm-tag-name.cat-meta      { color: #ffd866; }
 .tdm-tag-cat { color: #666; font-size: 11px; }
 .tdm-tag-count { color: #555; font-size: 11px; text-align: right; }
+
+
+/* ============================================================
+   【v3.0】悬浮生图按钮（FAB）
+   手机/平板端固定在右下角，半透明不遮挡画廊。
+   桌面端隐藏（桌面有面板内的生成按钮）。
+   ============================================================ */
+.fab-generate {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  color: white;
+  font-size: 24px;
+  cursor: pointer;
+  opacity: 0.7;
+  z-index: 100;
+  box-shadow: 0 4px 16px rgba(0,0,0,.3);
+  transition: opacity .2s, transform .2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 默认显示，桌面端隐藏 */
+}
+.fab-generate:active {
+  opacity: 1;
+  transform: scale(1.1);
+}
+/* 滚动时缩小 + 更透明，减少遮挡 */
+.fab-generate.fab-scrolling {
+  opacity: 0.3;
+  transform: scale(0.8);
+}
+/* 生成进行中的状态 */
+.fab-generate.fab-busy {
+  opacity: 1;
+  background: linear-gradient(135deg, #059669, #10b981);
+  font-size: 14px;
+}
+/* 桌面端隐藏 FAB */
+@media (min-width: 769px) {
+  .fab-generate { display: none; }
+}
+
+/* FAB 连续出图数量选择气泡 */
+.fab-batch-popup {
+  position: fixed;
+  bottom: 90px;
+  right: 16px;
+  background: #1e1e2e;
+  border: 1px solid #444;
+  border-radius: 12px;
+  padding: 8px;
+  display: flex;
+  gap: 6px;
+  z-index: 101;
+  box-shadow: 0 4px 20px rgba(0,0,0,.5);
+}
+.fab-batch-popup button {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  border: 1px solid #555;
+  background: #2a2a3e;
+  color: #ddd;
+  font-size: 14px;
+  cursor: pointer;
+}
+.fab-batch-popup button:hover {
+  background: #4f46e5;
+  color: white;
+}
 

@@ -1,55 +1,90 @@
-/**
- * AnimaImagine v2.2 标签数据管理面板。
- *
- * 功能：
- *   - 显示当前数据集状态（core/custom/artist 计数，来源，更新时间）
- *   - “从服务器重新拉取 core”（带进度条）
- *   - “导入自定义 CSV”（点击选文件 / 拖拽）
- *   - 列出自定义标签并允许单个删除
- *   - 一键清除自定义
- *   - 一键清除本地缓存（下次重新下载）
- *
- * 对话框使用原生 <dialog>，不引入依赖。
- */
-
 import {
-  getStats, refreshCoreFromRemote, importCustomCSV,
-  removeCustomTag, clearCustom, clearAllCache, listCustom,
+  clearAllCache,
+  clearCustom,
+  getStats,
+  importCustomCSV,
+  listCustom,
+  loadTagData,
+  refreshCoreFromRemote,
+  removeCustomTag,
 } from './tag-data.js';
-import { showToast, escapeHtml } from './utils.js';
+import { escapeHtml, showToast } from './utils.js';
+
+const CUSTOM_TAGS_KEY = 'custom_tags';
 
 let dialogEl = null;
+let syncPromise = null;
 
-export function openTagDataManager() {
-  if (!dialogEl) dialogEl = _build();
-  _refreshUI();
-  if (typeof dialogEl.showModal === 'function') dialogEl.showModal();
-  else dialogEl.setAttribute('open', '');
+export async function syncCustomTagsFromServer() {
+  if (syncPromise) return syncPromise;
+
+  syncPromise = (async () => {
+    const localCsv = await serializeCustomTags();
+
+    try {
+      const response = await fetch(`/api/preferences?keys=${CUSTOM_TAGS_KEY}`);
+      if (response.ok) {
+        const data = await response.json();
+        if (typeof data[CUSTOM_TAGS_KEY] === 'string') {
+          const remoteCsv = data[CUSTOM_TAGS_KEY];
+          if (normalizeCsv(remoteCsv) !== normalizeCsv(localCsv)) {
+            await replaceLocalCustomTags(remoteCsv);
+          } else if (!getStats().ready) {
+            await loadTagData();
+          }
+          return;
+        }
+      }
+    } catch {
+      // Ignore and fall back to local cache.
+    }
+
+    if (localCsv.trim()) {
+      await persistCustomTagsToServer(localCsv);
+    }
+    if (!getStats().ready) {
+      await loadTagData();
+    }
+  })();
+
+  try {
+    await syncPromise;
+  } finally {
+    syncPromise = null;
+  }
 }
 
-function _build() {
-  const d = document.createElement('dialog');
-  d.className = 'tdm-dialog';
-  d.innerHTML = `
-    <div class="tdm-header">
-      <h2>📊 标签数据管理</h2>
-      <button class="tdm-close" data-act="close">✕</button>
-    </div>
+export async function openTagDataManager() {
+  await syncCustomTagsFromServer();
+  if (!dialogEl) dialogEl = buildDialog();
+  await refreshUI();
+  if (typeof dialogEl.showModal === 'function') {
+    dialogEl.showModal();
+  } else {
+    dialogEl.setAttribute('open', '');
+  }
+}
 
+function buildDialog() {
+  const dialog = document.createElement('dialog');
+  dialog.className = 'tdm-dialog';
+  dialog.innerHTML = `
+    <div class="tdm-header">
+      <h2>标签数据管理</h2>
+      <button type="button" class="tdm-close" data-act="close">×</button>
+    </div>
     <div class="tdm-body">
-      <!-- 状态区 -->
       <section class="tdm-section">
         <h3>当前数据集</h3>
         <div class="tdm-stats" id="tdmStats"></div>
       </section>
 
-      <!-- 远程更新区 -->
       <section class="tdm-section">
-        <h3>从服务端重新拉取 core 标签库</h3>
-        <p class="tdm-hint">本地缓存遇到服务端更新后不会自动同步，可以手动拉一次。</p>
+        <h3>刷新核心标签库</h3>
+        <p class="tdm-hint">重新从服务端拉取 core 标签库，并更新本地缓存。</p>
         <div class="tdm-row">
-          <button class="tdm-btn primary" data-act="refresh-core">🔄 重新下载 core</button>
-          <button class="tdm-btn warn" data-act="clear-cache">🧹 清除本地缓存</button>
+          <button type="button" class="tdm-btn primary" data-act="refresh-core">重新下载 core</button>
+          <button type="button" class="tdm-btn warn" data-act="clear-cache">清除本地缓存</button>
         </div>
         <div class="tdm-progress" id="tdmProgress" style="display:none;">
           <div class="tdm-progress-bar"><div class="tdm-progress-fill" id="tdmProgressFill"></div></div>
@@ -57,124 +92,148 @@ function _build() {
         </div>
       </section>
 
-      <!-- 自定义导入区 -->
       <section class="tdm-section">
-        <h3>导入自定义标签 CSV</h3>
+        <h3>自定义标签 CSV</h3>
         <p class="tdm-hint">
-          格式：<code>tag,category,count,"alias1,alias2"</code>（首行可选 header）。
-          可用于追加未覆盖的画师、自定义角色、项目专属标签。
-          category：0=general / 1=artist / 3=copyright / 4=character / 5=meta。
+          格式：<code>tag,category,count,"alias1,alias2"</code>。导入后会同步到服务端偏好，跨端共用。
         </p>
         <div class="tdm-drop" id="tdmDrop">
           <input type="file" id="tdmFile" accept=".csv,.txt" hidden multiple />
-          <p>拖动 CSV 文件到此处，或 <button class="tdm-link" data-act="pick-file">点击选择</button></p>
+          <p>拖入 CSV 文件，或 <button type="button" class="tdm-link" data-act="pick-file">点击选择</button></p>
         </div>
         <details class="tdm-custom-list">
           <summary>已导入的自定义标签 <span id="tdmCustomCount"></span></summary>
           <div class="tdm-custom-table" id="tdmCustomTable"></div>
-          <button class="tdm-btn warn" data-act="clear-custom">全部清除</button>
+          <button type="button" class="tdm-btn warn" data-act="clear-custom">全部清除</button>
         </details>
       </section>
     </div>
   `;
 
-  document.body.appendChild(d);
-
-  // 事件委托
-  d.addEventListener('click', (e) => {
-    const act = e.target.closest('[data-act]')?.dataset.act;
-    if (!act) return;
-    _handleAction(act);
+  dialog.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-act]')?.dataset.act;
+    if (!action) return;
+    void handleAction(action);
   });
 
-  d.querySelector('#tdmFile').addEventListener('change', (e) => {
-    [...e.target.files].forEach(_importFile);
-    e.target.value = '';
+  dialog.querySelector('#tdmFile').addEventListener('change', (event) => {
+    [...event.target.files].forEach((file) => {
+      void importFile(file);
+    });
+    event.target.value = '';
   });
 
-  // 拖拽导入
-  const drop = d.querySelector('#tdmDrop');
-  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('drag-over'); });
-  drop.addEventListener('dragleave', () => drop.classList.remove('drag-over'));
-  drop.addEventListener('drop', (e) => {
-    e.preventDefault();
-    drop.classList.remove('drag-over');
-    [...e.dataTransfer.files].forEach(_importFile);
+  const dropZone = dialog.querySelector('#tdmDrop');
+  dropZone.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    dropZone.classList.remove('drag-over');
+    [...event.dataTransfer.files].forEach((file) => {
+      void importFile(file);
+    });
   });
 
-  return d;
+  document.body.appendChild(dialog);
+  return dialog;
 }
 
-function _handleAction(act) {
-  switch (act) {
-    case 'close': dialogEl.close(); break;
-    case 'pick-file': dialogEl.querySelector('#tdmFile').click(); break;
-    case 'refresh-core': _doRefreshCore(); break;
-    case 'clear-cache': _doClearCache(); break;
-    case 'clear-custom': _doClearCustom(); break;
+async function handleAction(action) {
+  switch (action) {
+    case 'close':
+      dialogEl.close();
+      return;
+    case 'pick-file':
+      dialogEl.querySelector('#tdmFile').click();
+      return;
+    case 'refresh-core':
+      await refreshCore();
+      return;
+    case 'clear-cache':
+      await clearCache();
+      return;
+    case 'clear-custom':
+      await clearAllCustomTags();
+      return;
     default:
-      if (act.startsWith('rm:')) _doRemoveCustom(act.slice(3));
+      if (action.startsWith('rm:')) {
+        await removeOneCustomTag(action.slice(3));
+      }
   }
 }
 
-async function _doRefreshCore() {
+async function refreshCore() {
   const progress = dialogEl.querySelector('#tdmProgress');
   const fill = dialogEl.querySelector('#tdmProgressFill');
   const text = dialogEl.querySelector('#tdmProgressText');
+
   progress.style.display = 'flex';
   fill.style.width = '0%';
   text.textContent = '0%';
+
   try {
     await refreshCoreFromRemote(undefined, (loaded, total) => {
-      const pct = total ? Math.min(100, Math.round(loaded / total * 100)) : 0;
-      fill.style.width = pct + '%';
-      text.textContent = total ? `${pct}%` : `${(loaded / 1024).toFixed(0)} KB`;
+      const percent = total ? Math.min(100, Math.round((loaded / total) * 100)) : 0;
+      fill.style.width = `${percent}%`;
+      text.textContent = total ? `${percent}%` : `${Math.round(loaded / 1024)} KB`;
     });
-    showToast('✅ core 标签库已更新', 'success');
-    _refreshUI();
-  } catch (e) {
-    showToast('❌ 更新失败: ' + e.message, 'error');
+    showToast('core 标签库已更新', 'success');
+    await refreshUI();
+  } catch (error) {
+    showToast(`更新失败: ${error.message}`, 'error');
   } finally {
-    setTimeout(() => { progress.style.display = 'none'; }, 600);
+    setTimeout(() => {
+      progress.style.display = 'none';
+    }, 600);
   }
 }
 
-// 【v2.3】clearAllCache 现在是 async（IndexedDB），需要 await
-async function _doClearCache() {
-  if (!confirm('确定清除本地缓存？下次启动会重新从服务器下载。')) return;
+async function clearCache() {
+  if (!window.confirm('确定清除本地缓存吗？下次会重新拉取标签数据。')) {
+    return;
+  }
   await clearAllCache();
-  showToast('本地缓存已清除，请刷新页面', 'info');
+  showToast('本地缓存已清除，刷新页面后会重新同步', 'info');
 }
 
-async function _doClearCustom() {
-  if (!confirm('确定删除所有自定义标签？')) return;
+async function clearAllCustomTags() {
+  if (!window.confirm('确定删除全部自定义标签吗？')) {
+    return;
+  }
+
   await clearCustom();
-  showToast('自定义标签已清除', 'success');
-  _refreshUI();
+  await persistCustomTagsToServer('');
+  showToast('自定义标签已清空', 'success');
+  await refreshUI();
 }
 
-async function _doRemoveCustom(name) {
+async function removeOneCustomTag(name) {
   await removeCustomTag(name);
-  _refreshUI();
+  await persistCustomTagsToServer(await serializeCustomTags());
+  await refreshUI();
 }
 
-function _importFile(file) {
+async function importFile(file) {
   const reader = new FileReader();
-  reader.onload = async (e) => {
+  reader.onload = async (event) => {
     try {
-      const added = await importCustomCSV(e.target.result);
-      showToast(`✅ 已导入 ${added} 个自定义标签`, 'success');
-      _refreshUI();
-    } catch (err) {
-      showToast('❌ 导入失败: ' + err.message, 'error');
+      const added = await importCustomCSV(event.target.result);
+      await persistCustomTagsToServer(await serializeCustomTags());
+      showToast(`已导入 ${added} 个自定义标签`, 'success');
+      await refreshUI();
+    } catch (error) {
+      showToast(`导入失败: ${error.message}`, 'error');
     }
   };
   reader.readAsText(file);
 }
 
-// 【v2.3】listCustom 变成 async（IndexedDB），_refreshUI 改为 async
-async function _refreshUI() {
+async function refreshUI() {
   if (!dialogEl) return;
+
   const stats = getStats();
   const statsEl = dialogEl.querySelector('#tdmStats');
   statsEl.innerHTML = `
@@ -182,22 +241,66 @@ async function _refreshUI() {
     <div class="tdm-stat"><span class="k">custom</span><span class="v">${stats.customCount.toLocaleString()}</span></div>
     <div class="tdm-stat"><span class="k">artists</span><span class="v">${stats.artistCount.toLocaleString()}</span></div>
     <div class="tdm-stat"><span class="k">来源</span><span class="v">${stats.source || '-'}</span></div>
-    <div class="tdm-stat"><span class="k">更新于</span><span class="v">${stats.updatedAt ? new Date(stats.updatedAt).toLocaleString() : '-'}</span></div>
+    <div class="tdm-stat"><span class="k">更新时间</span><span class="v">${stats.updatedAt ? new Date(stats.updatedAt).toLocaleString() : '-'}</span></div>
   `;
 
   const customList = await listCustom();
   dialogEl.querySelector('#tdmCustomCount').textContent = `(${customList.length})`;
+
   const tableEl = dialogEl.querySelector('#tdmCustomTable');
   if (!customList.length) {
     tableEl.innerHTML = '<p class="tdm-hint">尚未导入任何自定义标签。</p>';
-  } else {
-    tableEl.innerHTML = customList.slice(0, 200).map(t => `
-      <div class="tdm-row-tag">
-        <span class="tdm-tag-name cat-${t.categoryName}">${escapeHtml(t.tag)}</span>
-        <span class="tdm-tag-cat">${t.categoryName}</span>
-        <span class="tdm-tag-count">${t.count.toLocaleString()}</span>
-        <button class="tdm-link" data-act="rm:${escapeHtml(t.tag)}">删</button>
-      </div>
-    `).join('') + (customList.length > 200 ? `<p class="tdm-hint">仅显示前 200 项，共 ${customList.length} 项。</p>` : '');
+    return;
   }
+
+  const rows = customList.slice(0, 200).map((tag) => `
+    <div class="tdm-row-tag">
+      <span class="tdm-tag-name cat-${tag.categoryName}">${escapeHtml(tag.tag)}</span>
+      <span class="tdm-tag-cat">${tag.categoryName}</span>
+      <span class="tdm-tag-count">${tag.count.toLocaleString()}</span>
+      <button type="button" class="tdm-link" data-act="rm:${escapeHtml(tag.tag)}">删</button>
+    </div>
+  `).join('');
+
+  const summary = customList.length > 200
+    ? `<p class="tdm-hint">仅显示前 200 项，当前共 ${customList.length} 项。</p>`
+    : '';
+
+  tableEl.innerHTML = rows + summary;
+}
+
+async function replaceLocalCustomTags(csvText) {
+  await clearCustom();
+  if (csvText.trim()) {
+    await importCustomCSV(csvText);
+  } else if (!getStats().ready) {
+    await loadTagData();
+  }
+}
+
+async function persistCustomTagsToServer(csvText) {
+  try {
+    await fetch('/api/preferences', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: CUSTOM_TAGS_KEY, value: csvText }),
+    });
+  } catch {
+    // Keep local cache even if server sync fails.
+  }
+}
+
+async function serializeCustomTags() {
+  const customList = await listCustom();
+  return customList.map((tag) => {
+    const aliases = Array.isArray(tag.aliases) ? tag.aliases.filter(Boolean) : [];
+    const escapedAliases = aliases.length
+      ? `"${aliases.join(',').replace(/"/g, '""')}"`
+      : '';
+    return `${tag.tag},${tag.category},${tag.count},${escapedAliases}`;
+  }).join('\n');
+}
+
+function normalizeCsv(value) {
+  return (value || '').trim().replace(/\r\n/g, '\n');
 }
