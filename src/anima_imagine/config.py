@@ -28,7 +28,7 @@ class Config:
 
     # --- 模型 ---
     model_dir: str = ""
-    model_version: str = "preview3"
+    model_version: str = "base-v1.0"
     device: str = "cuda"
     low_vram: bool = False
 
@@ -144,7 +144,7 @@ def load_config(yaml_path: str = "config.yaml") -> Config:
         host=os.getenv("ANIMA_HOST", srv.get("host", "0.0.0.0")),
         port=int(os.getenv("ANIMA_PORT", srv.get("port", 8000))),
         model_dir=os.getenv("ANIMA_MODEL_DIR", mdl.get("model_dir", "")),
-        model_version=os.getenv("ANIMA_MODEL_VERSION", mdl.get("model_version", "preview3")),
+        model_version=os.getenv("ANIMA_MODEL_VERSION", mdl.get("model_version", "base-v1.0")),
         device=os.getenv("ANIMA_DEVICE", mdl.get("device", "cuda")),
         low_vram=_bool_env("ANIMA_LOW_VRAM", mdl.get("low_vram", False)),
         sage_attention=_bool_env("ANIMA_SAGE_ATTENTION", opt.get("sage_attention", True)),

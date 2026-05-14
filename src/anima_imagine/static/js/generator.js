@@ -38,6 +38,7 @@ const ADV_FIELDS = [
   { id: 'advNlCaption', key: 'nl_caption', cat: 0 },
 ];
 
+
 const pillInputs = new Map();
 const batchEditors = new Map();
 
@@ -115,6 +116,7 @@ export async function init() {
       initFieldTools(field, host, label, pill);
     }
   });
+
 
   document.querySelectorAll('.ratio-btn').forEach((button) => {
     button.addEventListener('click', () => {
@@ -209,15 +211,51 @@ function switchTab(mode) {
 }
 
 function initFieldTools(field, host, label, pill) {
-  let actionBar = label.querySelector('.adv-label-actions');
-  if (!actionBar) {
+  // ── v3.2 重构：按钮不能放在 <label> 内部 ──────────────────────────
+  // Chromium 对 <label> 内嵌套 <button> 的布局处理存在异常：
+  // getBoundingClientRect() 返回全 0、offsetWidth/Height 为 0，
+  // 导致 🔖 ✏️ 💾 🗑 四个按钮在视觉上完全不可见。
+  // 根因是 HTML 语义违规 —— label 不应包含交互式子元素（除关联控件外）。
+  //
+  // 修复方案：在 .adv-field 内创建 .adv-label-row 作为 flex 容器，
+  // 将 <label> 和按钮容器 <span class="adv-label-actions"> 提升为平级兄弟元素。
+  // 这样 label 回归纯文本标注角色，按钮独立存在于 row 中，布局正常。
+  //
+  // 实现时保证幂等：若 row 已存在（多次调用），直接复用不重复创建。
+  const advField = label.closest('.adv-field');
+  let row = advField?.querySelector('.adv-label-row');
+  let actionBar;
+
+  if (!row) {
+    // —— 首次调用：创建 row 并重组 DOM ——
+    row = document.createElement('div');
+    row.className = 'adv-label-row';
+
+    // 将 label 从 .adv-field 中移入 row
+    // 注意：label 原本是 .adv-field 的直接子元素，pill-host 是它的兄弟。
+    // 把 row 插到 label 原来的位置，再把 label 移入 row。
+    label.parentNode.insertBefore(row, label);
+    row.appendChild(label);
+
+    // 在 row 中创建按钮容器（label 的兄弟）
     actionBar = document.createElement('span');
     actionBar.className = 'adv-label-actions';
-    label.appendChild(actionBar);
+    row.appendChild(actionBar);
+  } else {
+    // —— 已重组过：直接复用已有 actionBar ——
+    actionBar = row.querySelector('.adv-label-actions');
+    if (!actionBar) {
+      actionBar = document.createElement('span');
+      actionBar.className = 'adv-label-actions';
+      row.appendChild(actionBar);
+    }
   }
 
   actionBar.appendChild(createPresetButton(field.id, pill));
   actionBar.appendChild(createBatchEditButton(field.id));
+  actionBar.appendChild(createFieldSaveButton(field, pill));
+  actionBar.appendChild(createFieldClearButton(field, pill));
+
 
   if (batchEditors.has(field.id)) return;
 
@@ -240,6 +278,7 @@ function initFieldTools(field, host, label, pill) {
     pill.setValue(textarea.value.trim());
     closeBatchEdit(field.id, { syncFromPill: true });
   });
+
   wrap.querySelector('.batch-edit-cancel')?.addEventListener('click', () => {
     closeBatchEdit(field.id, { syncFromPill: true });
   });
@@ -254,6 +293,7 @@ function initFieldTools(field, host, label, pill) {
     }
   });
 }
+
 
 function createBatchEditButton(fieldId) {
   const button = document.createElement('button');
@@ -295,6 +335,59 @@ function closeBatchEdit(fieldId, { syncFromPill = false } = {}) {
   state.host.hidden = false;
   state.wrap.hidden = true;
   state.wrap.classList.remove('active');
+}
+
+// ── v3.1 字段级保存/清空按钮 ────────────────────────────────────────────────
+// 每个 adv-field 标签行上独立的 💾 保存和 🗑 清空按钮。
+// 保存：将该字段当前值快照到 localStorage（key: anima_field_saved_{fieldId}）。
+// 清空：将该字段恢复为默认值（有默认值的还原，无默认值的置空）。
+
+function createFieldSaveButton(field, pill) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'adv-edit-btn';
+  button.title = `保存当前【${field.id}】字段值`;
+  button.textContent = '💾';
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    saveFieldValue(field, pill);
+  });
+  return button;
+}
+
+function createFieldClearButton(field, pill) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'adv-edit-btn';
+  button.title = `清空【${field.id}】字段`;
+  // 修复：'🗑' (U+1F5D1 Wastebasket) 在 Unicode 中默认是 text presentation，
+  // 不带 U+FE0F (Variation Selector-16) 时浏览器更倾向于选单色 text 字形，
+  // 叠加 .adv-edit-btn 的 opacity 0.45 + 暗背景后近乎不可见。
+  // 显式追加 \uFE0F 强制 emoji presentation，配合 CSS 里的 emoji-first 字体栈才能稳定渲染为彩色图标。
+  button.textContent = '🗑\uFE0F';
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    clearFieldValue(field, pill);
+  });
+  return button;
+}
+
+function saveFieldValue(field, pill) {
+  const value = pill.getValueSilent();
+  try {
+    localStorage.setItem(`anima_field_saved_${field.id}`, value);
+  } catch {
+    // localStorage 不可用时静默忽略
+  }
+  showToast(`已保存字段: ${field.id}`, 'success');
+}
+
+function clearFieldValue(field, pill) {
+  pill.setValue(field.defaultVal || '');
+  syncBatchEditorsFromPills();
+  updatePromptPreview();
+  saveLastValues();
+  showToast(`已清空字段: ${field.id}`, 'info');
 }
 
 function syncBatchEditorsFromPills() {

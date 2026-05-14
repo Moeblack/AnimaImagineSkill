@@ -28,7 +28,7 @@ server:
 # 留空则从 HuggingFace / ModelScope 自动下载（首次约 14 GB）。
 model:
   model_dir: "./models"   # 模型根目录（download_anima.py 默认下载到此处）
-  model_version: "preview3"  # Anima 版本: preview / preview2 / preview3
+  model_version: "base-v1.0"  # Anima 版本: preview / preview2 / preview3 / base-v1.0
   device: "cuda"          # cuda / cpu / mps
   low_vram: false         # 低显存模式（~8GB 可跑）
 

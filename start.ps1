@@ -10,8 +10,8 @@ param(
     # 模型根目录（包含 diffusion_models/ text_encoders/ vae/ 子目录）
     # 默认指向本项目下的 models/ 目录（与 config.example.yaml 保持一致）
     [string]$ModelDir = ".\models",
-    # Anima 版本: preview / preview2 / preview3
-    [string]$Version = "preview3",
+    # Anima 版本: preview / preview2 / preview3 / base-v1.0
+    [string]$Version = "base-v1.0",
     # 默认端口与 config.example.yaml 保持一致
     [int]$Port = 8000,
     [string]$Device = "cuda",

@@ -24,6 +24,7 @@ _DIT_BY_VERSION = {
     "preview":  "anima-preview.safetensors",
     "preview2": "anima-preview2.safetensors",
     "preview3": "anima-preview3-base.safetensors",
+    "base-v1.0": "anima-base-v1.0.safetensors",
 }
 
 

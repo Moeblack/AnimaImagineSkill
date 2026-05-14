@@ -8,11 +8,11 @@
 
 """
 Anima 模型下载脚本
-用法：uv run download_anima.py [--version preview3] [--output-dir ./models]
+用法：uv run download_anima.py [--version base-v1.0] [--output-dir ./models]
 
 功能：
   - 从 ModelScope 下载 circlestone-labs/Anima（国内直连，无需代理）
-  - 支持选择版本：preview / preview2 / preview3（默认 preview3）
+  - 支持选择版本：preview / preview2 / preview3 / base-v1.0（默认 base-v1.0）
   - 同时下载两个 tokenizer（Qwen3-0.6B + T5-xxl，共约 16 MB）
   - 已存在且大小一致的文件自动跳过，不重复下载
   - 断点续传（modelscope SDK 内置支持）
@@ -45,12 +45,17 @@ import argparse
 
 # ============================================================
 # 各版本 DiT 文件名映射
-# text_encoders 和 vae 三版本共用，只有 DiT 不同
+# text_encoders 和 vae 全版本共用，只有 DiT 不同
 # ============================================================
+# 注意：base-v1.0 是正式版模型（anima-base-v1.0.safetensors），
+# 发布于 HuggingFace circlestone-labs/Anima。ModelScope 同步存在延迟，
+# 若 download_anima.py 下载 base-v1.0 失败，请等待 ModelScope 同步完成
+# 或直接从 HuggingFace 手动下载后放入 models/diffusion_models/。
 _DIT_BY_VERSION = {
     "preview":  "anima-preview.safetensors",
     "preview2": "anima-preview2.safetensors",
     "preview3": "anima-preview3-base.safetensors",
+    "base-v1.0": "anima-base-v1.0.safetensors",
 }
 
 # text_encoder + vae（所有版本共用）
@@ -93,14 +98,14 @@ def main():
         description="从 ModelScope 下载 Anima 模型",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例:\n"
-               "  uv run download_anima.py                    # 默认下载 preview3\n"
+               "  uv run download_anima.py                    # 默认下载 base-v1.0\n"
                "  uv run download_anima.py --version preview2  # 下载 preview2\n"
                "  uv run download_anima.py --output-dir D:\\models\n",
     )
     parser.add_argument(
-        "--version", default="preview3",
+        "--version", default="base-v1.0",
         choices=list(_DIT_BY_VERSION.keys()),
-        help="Anima 版本（默认 preview3）",
+        help="Anima 版本（默认 base-v1.0）",
     )
     parser.add_argument(
         "--output-dir", default=None,

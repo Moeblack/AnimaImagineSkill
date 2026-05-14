@@ -128,6 +128,20 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 12px;
 }
+
+/* ── v3.2: 标签行容器 ───────────────────────────────────────────
+   将 <label> 和按钮容器 <span class="adv-label-actions"> 包装为
+   flex 平级兄弟，避免 label 内嵌 button 导致 Chromium 布局坍缩
+   (按钮 getBoundingClientRect() 全 0、offsetWidth/Height 为 0)。
+   justify-content: space-between 确保标签左对齐、按钮右对齐。 */
+.adv-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
 .adv-group {
   background: #12122a;
   border: 1px solid #22223a;
@@ -142,23 +156,18 @@ body {
   padding-bottom: 6px;
   border-bottom: 1px solid #22223a;
 }
-.adv-field {
-  margin-bottom: 6px;
-}
 .adv-field:last-child { margin-bottom: 0; }
+
+/* ── v3.2: .adv-label 退化为纯内联文本标签（flex 职责移交 .adv-label-row） */
 .adv-label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
   font-size: 11px; color: #888;
-  margin-bottom: 3px;
 }
+
 .adv-label-actions {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: auto;
+  flex-shrink: 0;  /* v3.2: 防止被 flex 容器压缩导致按钮不可见 */
 }
 
 /* --- v2.1: prompt 预览区 --- */
@@ -1046,6 +1055,16 @@ body.select-mode .header { display: none; }
   font-size: 12px; padding: 0 2px;
   opacity: 0.4; transition: opacity 0.15s;
   vertical-align: middle; margin-left: 4px;
+  color: inherit;
+  /* 修复：body 字体栈 (-apple-system, "Segoe UI", "Noto Sans SC") 不含 emoji 字体，
+     Windows 上 Segoe UI 自带 🗑/✏ 等 Unicode 字符的单色 text 字形，
+     按 per-character font fallback 规则会优先于系统 Segoe UI Emoji 命中，
+     单色字形 + color #888（从 .adv-label 继承）+ opacity 0.4 + #12122a 暗背景
+     叠加后对比度过低，按钮在视觉上几乎不可见。
+     这里把彩色 emoji 字体提到链首，让 emoji codepoint 优先匹配彩色字形；
+     emoji 字体不覆盖的普通字符会自动 fallback 到原有字体。 */
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji",
+               -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
 }
 .preset-btn:hover { opacity: 1; }
 .adv-edit-btn {
@@ -1056,6 +1075,11 @@ body.select-mode .header { display: none; }
   padding: 0 2px;
   opacity: 0.45;
   transition: opacity 0.15s;
+  color: inherit;
+  /* 字段级按钮（💾 🗑 ✏️）走与 .preset-btn 一致的 emoji-first 字体栈，
+     原因同上：避免被 Segoe UI 的单色字形拦截而在低 opacity 下消失。 */
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji",
+               -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
 }
 .adv-edit-btn:hover { opacity: 1; }
 
