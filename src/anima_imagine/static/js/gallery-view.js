@@ -235,6 +235,7 @@ function renderCard(img, isFlash = false) {
       <div class="card-actions">
         <button class="card-action-btn" data-action="download" data-url="${fullUrl}" title="下载">⬇</button>
         <button class="card-action-btn" data-action="copy" data-prompt="${escapeHtml(img.prompt || '')}" title="复制 Prompt">📋</button>
+        <button class="card-action-btn" data-action="copyImage" data-url="${fullUrl}" title="复制图片">🖼️</button>
         <button class="card-action-btn" data-action="fill" data-path="${escapeHtml(relPath)}" title="回填参数">🔄</button>
         <button class="card-action-btn" data-action="delete" data-path="${escapeHtml(relPath)}" title="删除">🗑</button>
       </div>
@@ -357,6 +358,29 @@ function _handleCardAction(btn) {
       navigator.clipboard.writeText(btn.dataset.prompt).then(() => {
         showToast('✅ Prompt 已复制到剪贴板', 'success');
       });
+      break;
+    }
+    // 【v3.3 新增】复制原图到剪切板 —— 与 lightbox.js 的 _copyImage 逻辑一致
+    case 'copyImage': {
+      const url = btn.dataset.url;
+      if (!url) return;
+      (async () => {
+        try {
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(`加载图片失败 (${response.status})`);
+          const blob = await response.blob();
+          if (typeof ClipboardItem !== 'undefined' && navigator.clipboard.write) {
+            await navigator.clipboard.write([
+              new ClipboardItem({ [blob.type]: blob })
+            ]);
+            showToast('✅ 图片已复制到剪切板', 'success');
+          } else {
+            showToast('⚠️ 当前浏览器不支持复制图片，请使用下载功能', 'warn');
+          }
+        } catch (err) {
+          showToast('复制图片失败: ' + err.message, 'error');
+        }
+      })();
       break;
     }
     case 'fill': {

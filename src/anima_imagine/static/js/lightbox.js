@@ -15,7 +15,7 @@ let currentIndex = -1;
 let metaExpanded = true;
 let onFillGenerator = null;
 
-let lbRoot, lbImg, lbImgWrap, lbPrompt, lbNegPrompt, lbParams, lbThumbstrip, lbZoomLabel;
+let lbRoot, lbImg, lbImgWrap, lbPrompt, lbNegPrompt, lbParams, lbThumbstrip, lbZoomLabel, lbCopyImage;
 
 function isEditableTarget(target) {
   if (!target) return false;
@@ -47,6 +47,7 @@ export function init(options = {}) {
   lbParams = document.getElementById('lbParams');
   lbThumbstrip = document.getElementById('lbThumbstrip');
   lbZoomLabel = document.getElementById('lbZoomLabel');
+  lbCopyImage = document.getElementById('lbCopyImage');
 
   document.getElementById('lbClose')?.addEventListener('click', close);
   // 【v2.3】点击背景关闭改为：只有未缩放时点击背景才关闭
@@ -59,6 +60,7 @@ export function init(options = {}) {
 
   document.getElementById('lbDownload')?.addEventListener('click', _download);
   document.getElementById('lbCopy')?.addEventListener('click', _copyPrompt);
+  lbCopyImage?.addEventListener('click', _copyImage);
   document.getElementById('lbFill')?.addEventListener('click', _fill);
   document.getElementById('lbFav')?.addEventListener('click', _toggleFav);
   document.getElementById('lbDelete')?.addEventListener('click', _delete);
@@ -73,6 +75,8 @@ export function init(options = {}) {
       case 'ArrowRight': navigate(1);  e.preventDefault(); break;
       case 'd': case 'D': _download(); break;
       case 'c': case 'C': _copyPrompt(); break;
+      // 【v3.3 新增】复制图片到剪切板
+      case 'p': case 'P': _copyImage(); break;
       case 'r': case 'R': _fill(); break;
       case 'f': case 'F': _toggleFav(); break;
       case 'i': case 'I': _toggleMeta(); break;
@@ -326,6 +330,37 @@ function _copyPrompt() {
   navigator.clipboard.writeText(img.prompt).then(() => {
     showToast('✅ Prompt 已复制', 'success');
   });
+}
+
+// 【v3.3 新增】复制原图（PNG blob）到系统剪切板
+async function _copyImage() {
+  const img = currentImages[currentIndex];
+  if (!img) return;
+
+  const relPath = `${img.date}/${img.filename}`;
+  const url = `/api/image?path=${encodeURIComponent(relPath)}`;
+
+  try {
+    // 获取图片 blob（同源请求，无需处理 CORS）
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`加载图片失败 (${response.status})`);
+    }
+    const blob = await response.blob();
+
+    // ClipboardItem API：将图片 blob 写入剪切板
+    // 注意：Safari 不支持 ClipboardItem 的图片类型，降级仅提示
+    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard.write) {
+      await navigator.clipboard.write([
+        new ClipboardItem({ [blob.type]: blob })
+      ]);
+      showToast('✅ 图片已复制到剪切板', 'success');
+    } else {
+      showToast('⚠️ 当前浏览器不支持复制图片，请使用下载功能', 'warn');
+    }
+  } catch (err) {
+    showToast('复制图片失败: ' + err.message, 'error');
+  }
 }
 
 function _fill() {

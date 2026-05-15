@@ -111,7 +111,11 @@ class GenerationService:
                 "accessories": req.accessories,
                 "body_decoration": req.body_decoration,
                 "expression": req.expression,
-                "pose_f": req.pose_f,
+                # 【fix】pose_f 与 pose_expression 的双向兼容：
+                # MCP 工具只传入 pose_expression（合并字段），网页端传入 pose_f 等细粒度字段。
+                # prompt_builder 中的逻辑是 pose_f = pose_f or pose_expression or tags，
+                # adv_fields 中也需要做同样的回退，确保 MCP 生成的图片回填时 pose_f 不为空。
+                "pose_f": req.pose_f or req.pose_expression or req.tags,
                 "pose_m": req.pose_m,
                 "nsfw_pose": req.nsfw_pose,
                 "nsfw_interaction": req.nsfw_interaction,
@@ -119,7 +123,11 @@ class GenerationService:
                 "environment": req.environment,
                 "style": req.style,
                 "others": req.others,
-                "nl_caption": req.nl_caption,
+                # 【fix】nl_caption 同样需要兼容旧字段 nltags
+                "nl_caption": req.nl_caption or req.nltags,
+                # 【fix】显式保存 pose_expression 原始值，
+                # 即使后端已将其合并到 pose_f，前端兼容逻辑仍需要此 key 作为回退源。
+                "pose_expression": req.pose_expression or req.tags,
             }
 
         return self.queue.submit(job)

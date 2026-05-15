@@ -72,7 +72,7 @@ def create_app(cfg: Config) -> tuple:
     register_auth_routes(mcp, auth_service, cfg)
     register_gallery_routes(mcp, gallery_service, cfg)
     register_generate_routes(mcp, gen_service, cfg, rate_limiter)
-    register_page_routes(mcp, cfg, pipeline, codex)
+    register_page_routes(mcp, cfg, pipeline, codex, job_queue)
     register_mcp_tools(mcp, gen_service, codex, cfg)
     # 【v3.0 新增】用户偏好 API（提示词缓存/预设/自定义标签全平台同步）
     register_preferences_routes(mcp, db)

@@ -83,6 +83,15 @@ def main():
 
         async def shutdown(self, sockets=None):
             await queue.stop()
+            # 【v3.1 新增】优雅退出时卸载模型，释放 GPU 显存
+            # 避免进程退出后 GPU 显存残留（nvidia-smi 显示占用）
+            print("[Shutdown] 正在卸载模型...")
+            try:
+                import asyncio
+                await asyncio.to_thread(pipeline.unload)
+                print("[Shutdown] 模型已卸载")
+            except Exception as e:
+                print(f"[Shutdown] 模型卸载失败（非致命）: {e}")
             await super().shutdown(sockets)
 
     config = uvicorn.Config(

@@ -171,7 +171,11 @@ export async function init() {
   });
 
   const negPrompt = document.getElementById('negPrompt');
-  negPrompt?.addEventListener('input', updateNegBadge);
+  // 【v3.3】input 事件同时更新 tag 计数和持久化当前值
+  negPrompt?.addEventListener('input', () => {
+    updateNegBadge();
+    saveLastNegValue();
+  });
   updateNegBadge();
 
   await loadHistoryFromServer();
@@ -179,6 +183,7 @@ export async function init() {
   syncBatchEditorsFromPills();
   updateResolution();
   updatePromptPreview();
+  initNegPromptTools();
 }
 
 function mapFieldCategory(cat) {
@@ -758,7 +763,11 @@ export function fillFromMeta(img) {
       const pill = pillInputs.get(field.id);
       if (!pill) return;
       let value = adv[field.key];
-      if (value === undefined && field.key === 'pose_f' && adv.pose_expression !== undefined) {
+      // 【fix】MCP 工具只传 pose_expression，后端 adv_fields 中 pose_f 等细粒度字段
+      // 可能为空字符串 ""（dataclass 默认值），需要同时检查 undefined 和空字符串。
+      // 后端 generation.py 已做 pose_f = pose_f or pose_expression 的回退映射，
+      // 此处作为防御层，确保任何遗漏的空字符串也能触发兼容逻辑。
+      if ((value === undefined || value === '') && field.key === 'pose_f' && adv.pose_expression) {
         value = adv.pose_expression;
       }
       if (value !== undefined) {
@@ -775,6 +784,8 @@ export function fillFromMeta(img) {
     const negPrompt = document.getElementById('negPrompt');
     if (negPrompt) negPrompt.value = img.negative_prompt;
     updateNegBadge();
+    // 【v3.3】回填后持久化，下次打开页面时恢复
+    saveLastNegValue();
   }
   if (img.seed !== undefined) document.getElementById('paramSeed').value = img.seed;
   if (img.steps !== undefined) {
@@ -956,3 +967,126 @@ function delay(ms) {
     window.setTimeout(resolve, ms);
   });
 }
+
+// ── v3.3 Negative Prompt 工具栏 ────────────────────────────────────────────
+// 为 Negative Prompt textarea 提供与 adv 字段一致的四人组按钮：
+// 🔖 预设  ✏️ 展开  💾 保存  🗑 清空
+//
+// 设计说明：
+// - negPrompt 是 <textarea> 而非 pill input，因此不能直接复用 initFieldTools。
+// - 通过创建 pill-like 包装对象（getValueSilent / setValue），复用 field-presets 系统。
+// - 展开/折叠按钮替代了批量编辑（textarea 本身即为编辑区），切换 rows 属性。
+// - 保存/清空按钮逻辑与 adv 字段保持一致（localStorage），key 前缀相同。
+
+// 默认 Negative Prompt —— 与后端 DEFAULT_NEG 保持一致
+const NEG_DEFAULT_VALUE =
+  'worst quality, low quality, score_1, score_2, score_3, ' +
+  'blurry, jpeg artifacts, sepia, bad hands, bad anatomy, ' +
+  'extra fingers, missing fingers, anatomical nonsense';
+
+function initNegPromptTools() {
+  const negPrompt = document.getElementById('negPrompt');
+  if (!negPrompt) return;
+
+  const tools = document.getElementById('negTools');
+  if (!tools) return;
+
+  // ── 创建 textarea 的 pill-like 包装 ──────────────────────────────────
+  // field-presets 系统依赖 getValueSilent() 和 setValue() 接口，
+  // 这里为 textarea 提供相同签名的包装，使预设弹窗可复用。
+  const negPillWrapper = {
+    getValueSilent: () => negPrompt.value,
+    setValue: (v) => {
+      negPrompt.value = v;
+      updateNegBadge();
+      saveLastNegValue();
+    },
+  };
+
+  // ── 🔖 预设按钮 ────────────────────────────────────────────────────
+  // 复用 field-presets.js 的预设系统，fieldId='negPrompt'
+  const presetBtn = document.getElementById('negPresetBtn');
+  if (presetBtn) {
+    const presetButton = createPresetButton('negPrompt', negPillWrapper);
+    presetBtn.replaceWith(presetButton);
+    // 【v3.3】统一外观：preset 按钮在 neg-tools 中应与 neg-tool-btn 样式一致
+    presetButton.classList.add('neg-tool-btn');
+  }
+
+  // ── ✏️ 展开/折叠按钮 ───────────────────────────────────────────────
+  const expandBtn = document.getElementById('negExpandBtn');
+  if (expandBtn) {
+    let expanded = false;
+    const defaultRows =
+      Number.parseInt(negPrompt.dataset.rowsDefault, 10) || 2;
+    const expandedRows =
+      Number.parseInt(negPrompt.dataset.rowsExpanded, 10) || 8;
+
+    expandBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      expanded = !expanded;
+      negPrompt.rows = expanded ? expandedRows : defaultRows;
+      expandBtn.classList.toggle('expanded', expanded);
+      expandBtn.title = expanded ? '折叠编辑' : '展开编辑';
+      expandBtn.textContent = expanded ? '🔽' : '✏️';
+    });
+  }
+
+  // ── 💾 保存按钮 ────────────────────────────────────────────────────
+  const saveBtn = document.getElementById('negSaveBtn');
+  if (saveBtn) {
+    saveBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const value = negPrompt.value;
+      try {
+        localStorage.setItem('anima_field_saved_negPrompt', value);
+      } catch {
+        // localStorage 不可用时静默忽略
+      }
+      showToast('已保存 Negative Prompt', 'success');
+    });
+  }
+
+  // ── 🗑 清空按钮 ────────────────────────────────────────────────────
+  const clearBtn = document.getElementById('negClearBtn');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      negPrompt.value = NEG_DEFAULT_VALUE;
+      updateNegBadge();
+      saveLastNegValue();
+      showToast('已恢复默认 Negative Prompt', 'info');
+    });
+  }
+
+  // ── 加载上次保存/会话的 negative prompt 值 ─────────────────────────
+  try {
+    const saved = localStorage.getItem('anima_field_saved_negPrompt');
+    if (saved !== null && saved !== '') {
+      negPrompt.value = saved;
+    } else {
+      // 回退：尝试加载上次会话值
+      const lastVal = localStorage.getItem('anima_last_negPrompt');
+      if (lastVal !== null && lastVal !== '') {
+        negPrompt.value = lastVal;
+      }
+    }
+    updateNegBadge();
+  } catch {
+    // 加载失败，保留 HTML 中的默认值
+  }
+}
+
+// ── v3.3 辅助：持久化 Negative Prompt 当前值 ────────────────────────────────
+// 在 negPrompt 值变更时（输入、回填、预设选择）自动调用，
+// 确保下次打开页面时恢复上次的 negative prompt。
+function saveLastNegValue() {
+  const negPrompt = document.getElementById('negPrompt');
+  if (!negPrompt) return;
+  try {
+    localStorage.setItem('anima_last_negPrompt', negPrompt.value);
+  } catch {
+    // ignore
+  }
+}
+

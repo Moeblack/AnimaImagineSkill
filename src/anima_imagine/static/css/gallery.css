@@ -235,6 +235,50 @@ body {
   margin-bottom: 8px;
 }
 
+/* --- v3.3: Negative Prompt 工具栏 --- */
+.neg-tools {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 0;
+  margin-bottom: 8px;
+  padding: 0 2px;
+}
+
+.neg-tool-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+  opacity: 0.45;
+  transition: opacity 0.15s;
+  color: #888;
+  border-radius: 3px;
+  /* 与 adv-edit-btn / preset-btn 一致的 emoji-first 字体栈，
+     防止 Segoe UI 单色字形在低 opacity 下消失 */
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji",
+               -apple-system, "Segoe UI", "Noto Sans SC", sans-serif;
+}
+
+.neg-tool-btn:hover {
+  opacity: 1;
+  background: #1a1a30;
+}
+
+/* 展开状态下的 ✏️ 按钮用高亮色提示当前为展开模式 */
+.neg-tool-btn.expanded {
+  opacity: 1;
+  color: #a78bfa;
+}
+
+/* neg-tools 容器中的 preset 按钮与 neg-tool-btn 保持统一外观 */
+.neg-tools .preset-btn {
+  font-size: inherit;
+  padding: inherit;
+}
+
+
 /* --- v2.1: 参数区 --- */
 .gen-params {
   padding: 10px 16px;

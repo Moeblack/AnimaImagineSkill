@@ -32,6 +32,7 @@
   <select id="datePicker"><option value="">全部日期</option></select>
   <input id="tagFilter" type="text" placeholder="🔍 标签过滤..." />
   <select id="promptHistory"><option value="">📜 历史</option></select>
+  <button class="header-btn" id="unloadModelBtn" title="卸载模型释放 GPU 显存">🧹 清理显存</button>
   <span class="stats" id="stats"></span>
 </div>
 
@@ -194,7 +195,15 @@
   <!-- === Negative Prompt（可折叠） === -->
   <details class="neg-section" id="negSection">
     <summary class="neg-toggle">Negative Prompt <span class="neg-badge" id="negBadge">7 tags</span></summary>
-    <textarea id="negPrompt" rows="2">worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia, bad hands, bad anatomy, extra fingers, missing fingers, anatomical nonsense</textarea>
+    <!-- 【v3.2】textarea 使用 rows 属性控制高度，展开/折叠由 JS 切换 -->
+    <textarea id="negPrompt" rows="2" data-rows-default="2" data-rows-expanded="8">worst quality, low quality, score_1, score_2, score_3, blurry, jpeg artifacts, sepia, bad hands, bad anatomy, extra fingers, missing fingers, anatomical nonsense</textarea>
+    <!-- 【v3.3】Negative Prompt 工具栏：与 adv 字段一致的四人组 -->
+    <div class="neg-tools" id="negTools">
+      <button type="button" class="neg-tool-btn" id="negPresetBtn" title="预设">🔖</button>
+      <button type="button" class="neg-tool-btn" id="negExpandBtn" title="展开编辑">✏️</button>
+      <button type="button" class="neg-tool-btn" id="negSaveBtn" title="保存当前值">💾</button>
+      <button type="button" class="neg-tool-btn" id="negClearBtn" title="恢复默认">🗑️</button>
+    </div>
   </details>
 
   <!-- === 参数区：紧凑单行布局 === -->
@@ -276,9 +285,10 @@
     <span class="lb-zoom-label" id="lbZoomLabel"></span>
     <button class="lb-btn" id="lbDownload" title="下载 (D)">⬇</button>
     <button class="lb-btn" id="lbCopy" title="复制 Prompt (C)">📋</button>
+    <button class="lb-btn" id="lbCopyImage" title="复制图片 (P)">🖼️</button>
     <button class="lb-btn" id="lbFill" title="回填参数 (R)">🔄</button>
     <button class="lb-btn" id="lbFav" title="收藏 (F)">☆</button>
-    <button class="lb-btn" id="lbDelete" title="删除 (Del)">🗑</button>
+    <button class="lb-btn" id="lbDelete" title="删除 (Del)">🗑️</button>
     <button class="lb-btn" id="lbToggleMeta" title="元数据 (I)">ℹ</button>
   </div>
   <button class="lb-nav lb-prev" id="lbPrev">‹</button>

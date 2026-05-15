@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import gc
 import os
 import time
 from pathlib import Path
@@ -146,7 +147,12 @@ class AnimaPipeline:
 
         返回 (PIL.Image, 实际种子, 耗时秒)。
         """
-        assert self.pipe is not None, "模型未加载"
+        # 【v3.1】自动加载：如果模型已被 unload()，则在此处自动重新加载
+        # 这样用户无需手动点击「重新加载」按钮，直接生图即可触发
+        if self.pipe is None:
+            print("[AnimaPipeline] 模型未加载，正在自动加载...")
+            self.load()  # 使用 __init__ 时保留的 _cfg，与初始加载完全一致
+            print("[AnimaPipeline] 自动加载完成，继续推理")
 
         if seed < 0:
             seed = torch.randint(0, 2**32 - 1, (1,)).item()
@@ -187,3 +193,67 @@ class AnimaPipeline:
 
         print(f"[Generate] 完成，耗时 {elapsed:.1f}s")
         return image, seed, elapsed
+
+
+    # ------------------------------------------------------------------
+    # 【v3.1 新增】显存管理：卸载 / 重载
+    # ------------------------------------------------------------------
+
+    @property
+    def is_loaded(self) -> bool:
+        """模型是否已加载到 GPU。"""
+        return self.pipe is not None
+
+    def unload(self) -> None:
+        """卸载模型并释放 GPU 显存。
+
+        执行顺序（经验证的最有效的清理步骤）：
+        1. 将 pipeline 移到 CPU
+        2. 删除 Python 引用
+        3. 强制垃圾回收
+        4. 清空 CUDA 缓存
+
+        注意：卸载后必须调用 reload() 才能再次推理。
+        """
+        if self.pipe is None:
+            print("[AnimaPipeline] 模型未加载，无需卸载")
+            return
+
+        print("[AnimaPipeline] 正在卸载模型...")
+        try:
+            # DiffSynth pipeline 可能有 to() 方法，尝试移到 CPU
+            if hasattr(self.pipe, "to"):
+                self.pipe.to("cpu")
+                print("[AnimaPipeline] 模型已移至 CPU")
+        except Exception as e:
+            print(f"[AnimaPipeline] 移至 CPU 失败（非致命）: {e}")
+
+        # 删除 pipeline 引用
+        del self.pipe
+        self.pipe = None
+
+        # 强制垃圾回收（必须在 empty_cache 之前）
+        gc.collect()
+
+        # 清空 CUDA 缓存
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            # 同时清理 CUDA IPC 和 cuBLAS 工作区
+            try:
+                torch.cuda.ipc_collect()
+            except Exception:
+                pass
+            try:
+                torch._C._cuda_clearCublasWorkspaces()
+            except Exception:
+                pass
+
+        print("[AnimaPipeline] 模型已卸载，GPU 显存已释放")
+
+    def reload(self) -> None:
+        """重新加载模型到 GPU。必须在 unload() 之后调用。"""
+        if self.pipe is not None:
+            print("[AnimaPipeline] 模型已加载，跳过 reload")
+            return
+        print("[AnimaPipeline] 正在重新加载模型...")
+        self.load()
