@@ -89,6 +89,10 @@ def create_app(cfg: Config) -> tuple:
     # 注意：StaticFiles 需要通过 Starlette mount，而 FastMCP 的 http_app 可能不支持。
     # 因此保留手动路由作为 fallback，同时尝试用 StaticFiles mount。
     import mimetypes
+    # 修复 Windows 下 mimetypes 模块把 .js 识别为 text/plain 的问题
+    mimetypes.add_type("application/javascript", ".js", True)
+    mimetypes.add_type("application/javascript", ".mjs", True)
+    mimetypes.add_type("text/css", ".css", True)
     from starlette.requests import Request
     from starlette.responses import Response, JSONResponse
 
